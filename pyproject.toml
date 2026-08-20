@@ -1,0 +1,17 @@
+[project]
+name = "shenzhen-travel-route-api"
+version = "1.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.117.1",
+  "ortools==9.15.6755",
+]
+
+[tool.uv]
+# OR-Tools lists these data-analysis libraries as general dependencies, but its
+# routing solver does not import or use them. Omitting them keeps the serverless
+# function under Vercel's uncompressed 500 MB Python bundle limit.
+exclude-dependencies = [
+  "numpy",
+  "pandas",
+]

@@ -1,0 +1,19 @@
+{
+  "buildCommand": "npx expo export --platform web",
+  "outputDirectory": "dist",
+  "framework": null,
+  "functions": {
+    "api/**/*.py": {
+      "excludeFiles": "{node_modules/**,ios/**,android/**,dist/**,src/**,assets/**,tests/**,.expo/**,**/*.tsx,**/*.ts,package*.json,package-lock*.json}"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/travel/config", "destination": "/api/index" },
+    { "source": "/api/travel/places", "destination": "/api/index" },
+    { "source": "/api/travel/routes", "destination": "/api/index" },
+    { "source": "/api/travel/optimize-route", "destination": "/api/index" },
+    { "source": "/api/optimize-route", "destination": "/api/index" },
+    { "source": "/api/health", "destination": "/api/index" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
