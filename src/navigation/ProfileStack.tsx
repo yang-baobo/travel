@@ -5,6 +5,7 @@ import { colors } from '../theme/colors';
 import ProfileScreen from '../screens/profile/ProfileScreen';
 import PreferenceScreen from '../screens/explore/PreferenceScreen';
 import FavoritesScreen from '../screens/profile/FavoritesScreen';
+import TripProfileScreen from '../screens/blind-box/TripProfileScreen';
 
 const Stack = createNativeStackNavigator<ProfileStackParamList>();
 
@@ -23,6 +24,7 @@ export default function ProfileStack() {
         component={ProfileScreen}
         options={{ headerShown: false }}
       />
+      <Stack.Screen name="TripProfile" component={TripProfileScreen} options={{ title: '盲盒设置' }} />
       <Stack.Screen
         name="Preference"
         component={PreferenceScreen}

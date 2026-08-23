@@ -15,7 +15,6 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { colors } from '../../theme/colors';
 import { spacing, borderRadius, shadow } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
-import { useAuthStore } from '../../store/useAuthStore';
 import { usePreferenceStore } from '../../store/usePreferenceStore';
 import { useFavoriteStore } from '../../store/useFavoriteStore';
 import { useElderlyMode } from '../../theme/ElderlyModeContext';
@@ -25,7 +24,6 @@ type Nav = NativeStackNavigationProp<ProfileStackParamList>;
 
 export default function ProfileScreen() {
   const navigation = useNavigation<Nav>();
-  const { currentUser, logout } = useAuthStore();
   const { hasSetPreferences, elderlyMode, setElderlyMode } = usePreferenceStore();
   const { scaleIcon } = useElderlyMode();
   const favStore = useFavoriteStore();
@@ -43,12 +41,23 @@ export default function ProfileScreen() {
               <Ionicons name="person" size={48} color={colors.primary} />
             </View>
           </View>
-          <Text style={styles.displayName}>{currentUser?.displayName || '旅行者'}</Text>
-          <Text style={styles.username}>@{currentUser?.username || 'user'}</Text>
+          <Text style={styles.displayName}>旅行者</Text>
+          <Text style={styles.username}>开启你的真实旅行</Text>
         </LinearGradient>
 
         {/* Menu Items */}
         <View style={styles.menuSection}>
+          <TouchableOpacity style={styles.prefItem} activeOpacity={0.7} onPress={() => navigation.navigate('TripProfile')}>
+            <View style={[styles.prefIconWrap, { backgroundColor: '#7C3AED' }]}>
+              <Ionicons name="shield-checkmark" size={scaleIcon(22)} color="#FFF" />
+            </View>
+            <View style={{ flex: 1, marginLeft: spacing.lg }}>
+              <Text style={[typography.body, { fontWeight: '600' }]}>盲盒安全设置</Text>
+              <Text style={typography.caption}>过敏、雷点、步行和夜间限制</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={scaleIcon(18)} color={colors.disabled} />
+          </TouchableOpacity>
+
           {/* 偏好设置 - 独立重要项 */}
           <TouchableOpacity style={styles.prefItem} activeOpacity={0.7} onPress={() => navigation.navigate('Preference')}>
             <View style={styles.prefIconWrap}>
@@ -101,16 +110,6 @@ export default function ProfileScreen() {
               <Ionicons name="chevron-forward" size={scaleIcon(18)} color={colors.disabled} />
             </TouchableOpacity>
           ))}
-        </View>
-
-        {/* Logout */}
-        <View style={styles.logoutSection}>
-          <TouchableOpacity style={styles.logoutBtn} onPress={logout} activeOpacity={0.8}>
-            <Ionicons name="log-out-outline" size={scaleIcon(20)} color={colors.priceRed} />
-            <Text style={[typography.body, { color: colors.priceRed, marginLeft: spacing.sm }]}>
-              退出登录
-            </Text>
-          </TouchableOpacity>
         </View>
 
         <View style={{ height: 40 }} />
@@ -200,18 +199,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: '#FFF',
-  },
-  logoutSection: {
-    paddingHorizontal: spacing.xl,
-    marginTop: spacing.xxl,
-  },
-  logoutBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.lg,
-    borderRadius: borderRadius.md,
-    borderWidth: 1,
-    borderColor: colors.priceRed,
   },
 });

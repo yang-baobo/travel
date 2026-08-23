@@ -39,7 +39,7 @@ export const getRecommendedRoomTypes = (groupSize: number, hotel: Hotel): RoomOp
   return rooms.filter(r => r.type === '套房' || r.maxOccupancy >= groupSize);
 };
 
-export const hotels: Hotel[] = [
+const baseHotels: Array<Omit<Hotel, 'source'>> = [
   // ===== Zone A: 南山区 (3家) =====
   {
     id: 'h01',
@@ -188,8 +188,12 @@ export const hotels: Hotel[] = [
     amenities: ['泳池', '亲子乐园', '海景房', 'WiFi', '自助早餐'],
     nearbyAttractions: ['a15', 'a13'],
   },
-  ...additionalHotels,
 ];
+
+export const hotels: Hotel[] = [...baseHotels, ...additionalHotels].map(hotel => ({
+  ...hotel,
+  source: 'static',
+}));
 
 // 按区域分组
 export const getHotelsByZone = (zone: string): Hotel[] =>

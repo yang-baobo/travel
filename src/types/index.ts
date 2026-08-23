@@ -150,6 +150,15 @@ export interface CartPreferences {
 }
 
 // ==================== 酒店相关 ====================
+export type {
+  HotelPriceType,
+  HotelSearchParams,
+  HotelSearchResponse,
+  HotelSource,
+  TravelHotel,
+  TripHotelContext,
+} from './hotel';
+
 export type HotelLevel = 'budget' | 'mid' | 'luxury';
 export type RoomType = '大床房' | '双床房' | '亲子房' | '套房' | '标准间';
 
@@ -168,6 +177,7 @@ export interface BreakfastOptions {
 
 export interface Hotel {
   id: string;
+  source?: 'static'; // 兼容历史演示类型；主数据导出时会显式补为 static
   name: string;
   description: string;
   zone: string;
@@ -427,6 +437,8 @@ export type AuthStackParamList = {
 // 探索 Tab
 export type ExploreStackParamList = {
   Home: undefined;
+  TripProfile: undefined;
+  BlindBox: undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
   LivePlaceDetail: { placeId: string };
   LiveItinerary: undefined;
@@ -449,9 +461,12 @@ export type ExploreStackParamList = {
 // 自定义 Tab
 export type CustomStackParamList = {
   CustomHome: undefined;
+  TripProfile: undefined;
+  BlindBox: undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
   LivePlaceDetail: { placeId: string };
   LiveItinerary: undefined;
+  HotelList: undefined;
   RoutePlan: undefined;
   RouteDetail: undefined;
   Cart: undefined;
@@ -472,6 +487,7 @@ export type OrderStackParamList = {
 // 个人 Tab
 export type ProfileStackParamList = {
   Profile: undefined;
+  TripProfile: undefined;
   Preference: undefined;
   Favorites: undefined;
 };

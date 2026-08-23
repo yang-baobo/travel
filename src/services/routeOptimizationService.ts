@@ -1,4 +1,15 @@
 import { apiRequest } from './apiClient';
+import { fetchAmapRouteSegment } from '../utils/amapService';
+import type { TransportPreference, TransportRule } from '../types';
+import type { TravelHotel } from '../types/hotel';
+import type { TravelPlace, TravelRouteEndpoint, TravelRouteSegment } from '../types/travel';
+import {
+  buildRealDurationMatrix,
+  RealRouteUnavailableError,
+  type RouteSegmentFetcher,
+} from '../utils/realRouteMatrix';
+
+export { RealRouteUnavailableError, type RouteSegmentFetcher } from '../utils/realRouteMatrix';
 
 export interface RouteOptimizationAttraction {
   id: string;
@@ -48,6 +59,79 @@ export interface RouteOptimizationResponse {
 }
 
 const ROUTE_API_URL = '/api/travel/optimize-route';
+
+export function travelHotelToRouteEndpoint(hotel: TravelHotel): TravelRouteEndpoint {
+  if (
+    !hotel.coordinateVerified
+    || hotel.coordinateSource !== 'amap'
+    || hotel.latitude === null
+    || hotel.longitude === null
+  ) {
+    throw new RealRouteUnavailableError('酒店坐标尚未通过高德核验，无法进入路线算法。');
+  }
+  return {
+    id: hotel.id,
+    name: hotel.name,
+    location: { latitude: hotel.latitude, longitude: hotel.longitude },
+  };
+}
+
+export function travelPlaceToRouteEndpoint(place: TravelPlace): TravelRouteEndpoint {
+  return { id: place.id, name: place.name, location: place.location };
+}
+
+export async function buildAmapDurationMatrix(
+  nodes: TravelRouteEndpoint[],
+  preference: TransportPreference,
+  rule: Pick<TransportRule, 'defaultMode'>,
+  fetchSegment: RouteSegmentFetcher = fetchAmapRouteSegment,
+): Promise<{
+  node_ids: string[];
+  durations: number[][];
+  segments: TravelRouteSegment[];
+}> {
+  return buildRealDurationMatrix(nodes, preference, rule, fetchSegment);
+}
+
+export async function optimizeHotelAnchoredTravelRoute(params: {
+  hotel: TravelHotel;
+  attractions: Array<{
+    place: TravelPlace;
+    durationMinutes: number;
+    priority: number;
+    openingWindows?: [number, number][];
+    openingWindowsByDay?: Record<number, [number, number][]>;
+  }>;
+  days: Omit<RouteOptimizationDay, 'start_anchor_id' | 'end_anchor_id'>[];
+  preference: TransportPreference;
+  transportRule: Pick<TransportRule, 'defaultMode'>;
+  fetchSegment?: RouteSegmentFetcher;
+}): Promise<{ optimization: RouteOptimizationResponse; segments: TravelRouteSegment[] }> {
+  const hotelNode = travelHotelToRouteEndpoint(params.hotel);
+  const placeNodes = params.attractions.map(item => travelPlaceToRouteEndpoint(item.place));
+  const matrix = await buildAmapDurationMatrix(
+    [hotelNode, ...placeNodes],
+    params.preference,
+    params.transportRule,
+    params.fetchSegment,
+  );
+  const optimization = await optimizeTravelRoute({
+    attractions: params.attractions.map(item => ({
+      id: item.place.id,
+      duration_minutes: Math.max(1, Math.round(item.durationMinutes)),
+      opening_windows: item.openingWindows ?? [[0, 1440]],
+      opening_windows_by_day: item.openingWindowsByDay,
+      priority: Math.max(0, Math.min(100, Math.round(item.priority))),
+    })),
+    days: params.days.map(day => ({
+      ...day,
+      start_anchor_id: hotelNode.id,
+      end_anchor_id: hotelNode.id,
+    })),
+    matrix: { node_ids: matrix.node_ids, durations: matrix.durations },
+  });
+  return { optimization, segments: matrix.segments };
+}
 
 function parseClock(value: string): number {
   const [hours, minutes] = value.split(':').map(Number);

@@ -1,4 +1,5 @@
 import type { DrivingInfo, TransitInfo, WalkingInfo } from './index';
+import type { TransportMode } from './index';
 
 export type TravelPlaceCategory = 'attraction' | 'hotel' | 'restaurant';
 
@@ -61,4 +62,26 @@ export interface TravelRoutesResponse {
   transit: TransitInfo | null;
   driving: DrivingInfo | null;
   walking: WalkingInfo | null;
+}
+
+export interface TravelRouteEndpoint {
+  id: string;
+  name: string;
+  location: TravelLocation;
+}
+
+export interface TravelRouteSegment {
+  originId: string;
+  destinationId: string;
+  originName: string;
+  destinationName: string;
+  mode: Extract<TransportMode, 'transit' | 'driving' | 'walking'>;
+  distanceMeters: number | null;
+  durationMinutes: number | null;
+  price: number | null;
+  detail: string | null;
+  provider: 'amap';
+  calculatedAt: string;
+  estimated: false;
+  status: 'available' | 'no_route';
 }

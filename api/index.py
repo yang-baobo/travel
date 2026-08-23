@@ -2,14 +2,44 @@ from __future__ import annotations
 
 import time
 import re
+from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+
+# Server-only provider credentials live in the ignored project .env. React
+# Native never reads these names and public EXPO_PUBLIC_ prefixes are forbidden.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 try:
+    from .ai import (
+        AIChatRequest,
+        AIConfigurationError,
+        AIUpstreamError,
+        ASRRequest,
+        ai_provider_status,
+        chat_with_glm,
+        proxy_stepfun_realtime,
+        transcribe_with_stepfun,
+    )
+    from .blind_box import BlindBoxGenerateRequest, generate_blind_box
+    from .hotels.errors import (
+        HotelAuthenticationError,
+        HotelCapabilityUnavailableError,
+        HotelConfigurationError,
+        HotelInvalidRequestError,
+        HotelMalformedResponseError,
+        HotelProviderTimeoutError,
+        HotelProviderUnavailableError,
+    )
+    from .hotels.models import HotelSearchParams, HotelSearchResponse
+    from .hotels.service import TravelHotelService
+    from .hotel_geo import HotelGeoRequest, HotelGeoResponse, resolve_hotel_geography
     from .travel_providers import (
         ProviderNotConfigured,
         ProviderRequestError,
@@ -18,6 +48,29 @@ try:
         search_places,
     )
 except ImportError:  # Vercel can load this module without a package context.
+    from ai import (  # type: ignore[no-redef]
+        AIChatRequest,
+        AIConfigurationError,
+        AIUpstreamError,
+        ASRRequest,
+        ai_provider_status,
+        chat_with_glm,
+        proxy_stepfun_realtime,
+        transcribe_with_stepfun,
+    )
+    from blind_box import BlindBoxGenerateRequest, generate_blind_box  # type: ignore[no-redef]
+    from hotels.errors import (  # type: ignore[no-redef]
+        HotelAuthenticationError,
+        HotelCapabilityUnavailableError,
+        HotelConfigurationError,
+        HotelInvalidRequestError,
+        HotelMalformedResponseError,
+        HotelProviderTimeoutError,
+        HotelProviderUnavailableError,
+    )
+    from hotels.models import HotelSearchParams, HotelSearchResponse  # type: ignore[no-redef]
+    from hotels.service import TravelHotelService  # type: ignore[no-redef]
+    from hotel_geo import HotelGeoRequest, HotelGeoResponse, resolve_hotel_geography  # type: ignore[no-redef]
     from travel_providers import (  # type: ignore[no-redef]
         ProviderNotConfigured,
         ProviderRequestError,
@@ -86,6 +139,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+_hotel_service = TravelHotelService()
+
+
+def get_hotel_service() -> TravelHotelService:
+    return _hotel_service
 
 
 def _validate_matrix(matrix: MatrixInput) -> dict[str, int]:
@@ -289,6 +348,39 @@ def travel_config() -> dict:
     return provider_status()
 
 
+@app.get("/api/ai/config")
+def ai_config() -> dict:
+    """Return model names and configuration state without exposing credentials."""
+    return ai_provider_status()
+
+
+@app.post("/api/ai/chat")
+def ai_chat(payload: AIChatRequest) -> dict:
+    try:
+        return chat_with_glm(payload)
+    except AIConfigurationError as exc:
+        raise HTTPException(status_code=503, detail={"code": "AI_NOT_CONFIGURED", "message": str(exc)}) from exc
+    except AIUpstreamError as exc:
+        raise HTTPException(status_code=502, detail={"code": "AI_UPSTREAM_FAILED", "message": str(exc)}) from exc
+
+
+@app.post("/api/ai/asr")
+def ai_asr(payload: ASRRequest) -> dict:
+    try:
+        return transcribe_with_stepfun(payload)
+    except AIConfigurationError as exc:
+        raise HTTPException(status_code=503, detail={"code": "ASR_NOT_CONFIGURED", "message": str(exc)}) from exc
+    except AIUpstreamError as exc:
+        raise HTTPException(status_code=502, detail={"code": "ASR_UPSTREAM_FAILED", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_AUDIO", "message": str(exc)}) from exc
+
+
+@app.websocket("/api/ai/realtime")
+async def ai_realtime(websocket: WebSocket) -> None:
+    await proxy_stepfun_realtime(websocket)
+
+
 @app.get("/api/travel/places")
 def travel_places(
     category: Literal["attraction", "hotel", "restaurant"],
@@ -308,8 +400,6 @@ def travel_places(
             status_code=502,
             detail={"code": "PROVIDER_REQUEST_FAILED", "message": str(exc)},
         ) from exc
-
-
 COORDINATE_PATTERN = re.compile(r"^-?(?:180(?:\.0+)?|1[0-7]\d(?:\.\d+)?|\d?\d(?:\.\d+)?),-?(?:90(?:\.0+)?|[0-8]?\d(?:\.\d+)?)$")
 
 
@@ -340,6 +430,50 @@ def travel_routes(
             status_code=502,
             detail={"code": "PROVIDER_REQUEST_FAILED", "message": str(exc)},
         ) from exc
+
+
+@app.post("/api/travel/hotels/search", response_model=HotelSearchResponse)
+def travel_hotel_search(payload: HotelSearchParams) -> HotelSearchResponse:
+    """Search real FlyAI hotels while keeping credentials and raw data server-side."""
+    try:
+        return get_hotel_service().search(payload)
+    except HotelCapabilityUnavailableError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
+    except HotelInvalidRequestError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
+    except HotelConfigurationError as exc:
+        raise HTTPException(status_code=503, detail={"code": exc.code, "message": str(exc)}) from exc
+    except HotelProviderTimeoutError as exc:
+        raise HTTPException(status_code=504, detail={"code": exc.code, "message": str(exc)}) from exc
+    except HotelAuthenticationError as exc:
+        raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from exc
+    except HotelMalformedResponseError as exc:
+        raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from exc
+    except HotelProviderUnavailableError as exc:
+        raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from exc
+
+
+@app.post("/api/travel/hotels/geocode", response_model=HotelGeoResponse)
+def travel_hotel_geocode(payload: HotelGeoRequest) -> HotelGeoResponse:
+    """Resolve one selected hotel through AMap; unverified provider coordinates are never promoted here."""
+    try:
+        return resolve_hotel_geography(payload)
+    except ProviderNotConfigured as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "PROVIDER_NOT_CONFIGURED", "message": str(exc)},
+        ) from exc
+    except ProviderRequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "PROVIDER_REQUEST_FAILED", "message": str(exc)},
+        ) from exc
+
+
+@app.post("/api/travel/blind-box")
+def travel_blind_box(payload: BlindBoxGenerateRequest) -> dict:
+    """Generate one constraint-aware blind-box item from provider-backed data."""
+    return generate_blind_box(payload)
 
 
 @app.post("/", response_model=OptimizeResponse)

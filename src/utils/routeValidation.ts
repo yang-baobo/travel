@@ -1,4 +1,7 @@
 import { Flight, ScheduleItem } from '../types';
+import type { TravelRouteSegment } from '../types/travel';
+import { validateTravelRouteSegments } from './realRouteValidation';
+export { validateTravelRouteSegments } from './realRouteValidation';
 import { getUniversalRoute } from './universalRoute';
 import { getAirportHandlingTime } from './routeGenerator';
 
@@ -39,7 +42,9 @@ export interface RouteValidationIssue {
     | 'missing_departure_transport'
     | 'airport_buffer_missed'
     | 'local_item_before_arrival'
-    | 'missing_daily_window';
+    | 'missing_daily_window'
+    | 'real_route_unavailable'
+    | 'invalid_real_duration';
   day: number;
   message: string;
 }
@@ -141,8 +146,9 @@ export function validateRoutePlan(params: {
   dailyEndTime: string;
   departureFlight?: Flight | null;
   returnFlight?: Flight | null;
+  realRouteSegments?: TravelRouteSegment[];
 }): RouteValidationResult {
-  const issues: RouteValidationIssue[] = [];
+  const issues: RouteValidationIssue[] = [...validateTravelRouteSegments(params.realRouteSegments ?? [])];
   const dailyEndMinutes = timeToMinutes(params.dailyEndTime);
 
   params.schedule.forEach((dayItems, index) => {

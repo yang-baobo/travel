@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
@@ -10,8 +11,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote_plus, urlencode, urlparse
 from urllib.request import Request, urlopen
 
+import certifi
+
 
 PlaceCategory = Literal["attraction", "hotel", "restaurant"]
+BlindBoxContentCategory = Literal["attraction", "food", "shopping", "experience", "rest"]
 
 BEIJING = {
     "name": "北京",
@@ -20,11 +24,22 @@ BEIJING = {
 }
 
 AMAP_BASE_URL = "https://restapi.amap.com"
+AMAP_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 AMAP_PLACE_TYPES: dict[PlaceCategory, str] = {
     # 风景名胜 + 主要公共文化场馆，排除学校和培训机构等非游览地点。
     "attraction": "110000|140100|140200|140400|140500|140600",
     "hotel": "100000",
     "restaurant": "050000",
+}
+
+# Blind-box categories are broader than the public explore tabs. They are kept
+# in this provider adapter so the selection engine never calls Amap directly.
+AMAP_BLIND_BOX_TYPES: dict[BlindBoxContentCategory, str] = {
+    "attraction": "110000|140100|140200|140400|140500|140600",
+    "food": "050000",
+    "shopping": "060000",
+    "experience": "080000|140100|140400|140500|140600",
+    "rest": "050500|110100",
 }
 
 _REQUEST_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -63,7 +78,7 @@ def provider_status() -> dict[str, Any]:
         "city": BEIJING,
         "amap": {
             "configured": bool(os.getenv("AMAP_WEB_SERVICE_KEY", "").strip()),
-            "capabilities": ["places", "transit", "walking", "driving"],
+            "capabilities": ["places", "hotel_geocode", "transit", "walking", "driving"],
         },
         "ctrip": {
             "configured": bool(
@@ -103,7 +118,7 @@ def _amap_request(path: str, params: dict[str, Any]) -> dict[str, Any]:
         },
     )
     try:
-        with urlopen(request, timeout=8) as response:
+        with urlopen(request, timeout=8, context=AMAP_SSL_CONTEXT) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         # Do not include the upstream URL in errors because it contains the Key.
@@ -245,6 +260,8 @@ def search_places(
     page: int = 1,
     page_size: int = 20,
 ) -> dict[str, Any]:
+    normalized_keyword = keyword.strip().casefold()
+    provider_page_size = max(page_size, 10) if normalized_keyword and page == 1 else page_size
     payload = _amap_request(
         "/v5/place/text",
         {
@@ -253,16 +270,22 @@ def search_places(
             "types": AMAP_PLACE_TYPES[category],
             "keywords": keyword.strip(),
             "page_num": page,
-            "page_size": page_size,
+            "page_size": provider_page_size,
             "show_fields": "business,photos",
         },
     )
     raw_pois = payload.get("pois")
     pois = raw_pois if isinstance(raw_pois, list) else []
     items = [item for poi in pois if (item := _normalize_place(poi, category)) is not None]
+    if normalized_keyword:
+        # POI v5 relevance order can place a popular but unrelated POI before an
+        # exact text hit. Preserve provider order otherwise, but promote an exact
+        # requested name so callers never treat the first unrelated result as it.
+        items.sort(key=lambda item: 0 if item["name"].strip().casefold() == normalized_keyword else 1)
+    items = items[:page_size]
     # POI 2.0 的 count 是本页实际返回数，不是全量总数。
     count = int(payload.get("count") or len(items))
-    has_more = count >= page_size and page < 100
+    has_more = count >= provider_page_size and page < 100
     return {
         "city": BEIJING,
         "category": category,
@@ -275,6 +298,63 @@ def search_places(
     }
 
 
+def search_blind_box_places(
+    category: BlindBoxContentCategory,
+    keyword: str = "",
+    page_size: int = 20,
+) -> list[dict[str, Any]]:
+    """Return only provider facts needed by the blind-box rule engine."""
+    payload = _amap_request(
+        "/v5/place/text",
+        {
+            "region": BEIJING["adcode"],
+            "city_limit": "true",
+            "types": AMAP_BLIND_BOX_TYPES[category],
+            "keywords": keyword.strip(),
+            "page_num": 1,
+            "page_size": max(1, min(25, page_size)),
+            "show_fields": "business,photos",
+        },
+    )
+    raw_pois = payload.get("pois")
+    pois = raw_pois if isinstance(raw_pois, list) else []
+    candidates: list[dict[str, Any]] = []
+    for poi in pois:
+        if not isinstance(poi, dict):
+            continue
+        place_location = _location(poi.get("location"))
+        place_id = _string(poi.get("id"))
+        name = _string(poi.get("name"))
+        if place_location is None or not place_id or not name:
+            continue
+        business = poi.get("business") if isinstance(poi.get("business"), dict) else {}
+        type_name = _string(poi.get("type"))
+        candidates.append(
+            {
+                "id": place_id,
+                "name": name,
+                "category": category,
+                "subcategory": type_name.split(";")[-1] if type_name else "",
+                "address": _string(poi.get("address")),
+                "district": _string(poi.get("district")) or _string(poi.get("adname")),
+                "lat": place_location["latitude"],
+                "lng": place_location["longitude"],
+                "price": _float(business.get("cost")),
+                "currency": "CNY",
+                "opening_hours_text": (
+                    _string(business.get("opentime_today"))
+                    or _string(business.get("opentime_week"))
+                    or _string(business.get("open_time"))
+                ),
+                "rating": _float(business.get("rating")),
+                "type_name": type_name,
+                "photo_urls": _photo_urls(poi.get("photos")),
+                "source": "amap",
+            }
+        )
+    return candidates
+
+
 def _first_list(value: Any) -> dict[str, Any] | None:
     if isinstance(value, list) and value and isinstance(value[0], dict):
         return value[0]
@@ -283,12 +363,16 @@ def _first_list(value: Any) -> dict[str, Any] | None:
 
 def _duration_minutes(value: Any) -> int | None:
     seconds = _float(value)
-    return round(seconds / 60) if seconds is not None else None
+    if seconds is None:
+        return None
+    if seconds == 0:
+        return 0
+    return max(1, round(seconds / 60))
 
 
 def _distance_km(value: Any) -> float | None:
     meters = _float(value)
-    return round(meters / 1000, 1) if meters is not None else None
+    return round(meters / 1000, 3) if meters is not None else None
 
 
 def _route_cost(container: dict[str, Any], key: str) -> float | None:

@@ -11,6 +11,7 @@ import { RouteStop } from '../types';
 import { scoreAttractions, scoreHotels, scoreRestaurants } from './recommendationEngine';
 import { getUniversalRoute, getLocationInfo } from './universalRoute';
 import { getHotelBreakfastOptions, HOTEL_BREAKFAST_ID } from './mealScheduler';
+import { buildSelectedHotelRouteInput } from './selectedHotelRouteBridge';
 
 /**
  * 根据完整交通偏好选择最佳交通方式
@@ -141,8 +142,10 @@ export function generateRoute(selectedAttractionIds?: string[]): RouteSummary {
     selectedAttractions = selectAttractionsByPreference(categories, travelDays);
   }
 
-  // 2. 先选酒店作为住宿锚点
-  const hotel = selectHotel(hotelLevel, selectedAttractions);
+  // 2. 当前 Trip 已有真实酒店时，不再悄悄选择另一个静态酒店。
+  // FlyAI 坐标进入高德矩阵前只通过边界暴露，不在此处伪造路线耗时。
+  const selectedHotelRouteInput = buildSelectedHotelRouteInput();
+  const hotel = selectedHotelRouteInput ? null : selectHotel(hotelLevel, selectedAttractions);
 
   // 3. 按主线顺路分配到各天，并维护每天连续访问顺序
   const dailyPlan = buildContinuousDailyPlan(selectedAttractions, travelDays, hotel?.id ?? null);

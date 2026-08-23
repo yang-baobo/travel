@@ -5,13 +5,11 @@ import { hotels } from '../data/hotels';
 interface HotelState {
   allHotels: Hotel[];
   filteredHotels: Hotel[];
-  selectedHotelId: string | null;
 
   filterByZone: (zone: string) => void;
   filterByLevel: (level: HotelLevel) => void;
   filterByPriceRange: (min: number, max: number) => void;
   resetFilter: () => void;
-  selectHotel: (id: string | null) => void;
   getById: (id: string) => Hotel | undefined;
   getRecommendedForZone: (zone: string) => Hotel[];
 }
@@ -19,7 +17,6 @@ interface HotelState {
 export const useHotelStore = create<HotelState>((set) => ({
   allHotels: hotels,
   filteredHotels: hotels,
-  selectedHotelId: null,
 
   filterByZone: (zone) => {
     set({ filteredHotels: hotels.filter(h => h.zone === zone) });
@@ -38,8 +35,6 @@ export const useHotelStore = create<HotelState>((set) => ({
   },
 
   resetFilter: () => set({ filteredHotels: hotels }),
-
-  selectHotel: (id) => set({ selectedHotelId: id }),
 
   getById: (id) => hotels.find(h => h.id === id),
 

@@ -1,6 +1,6 @@
 import { Hotel } from '../types';
 
-export const additionalHotels: Hotel[] = [
+export const additionalHotels: Array<Omit<Hotel, 'source'>> = [
   // ===== Zone A: 南山区 =====
   {
     id: 'h11',

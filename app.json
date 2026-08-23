@@ -39,7 +39,14 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-speech-recognition"
+      "expo-speech-recognition",
+      [
+        "@siteed/audio-studio",
+        {
+          "enableBackgroundAudio": false,
+          "microphonePermission": "允许应用使用麦克风与旅行助手进行语音交流"
+        }
+      ]
     ]
   }
 }

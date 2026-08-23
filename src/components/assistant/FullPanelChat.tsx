@@ -29,6 +29,7 @@ import { generateRoute } from '../../utils/routeGenerator';
 import { useAssistantStore, ChatBubble } from '../../store/useAssistantStore';
 import { voiceService } from '../../utils/voiceService';
 import { VoiceEngine } from '../../hooks/useVoiceEngine';
+import RealtimeCallPanel from './RealtimeCallPanel';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -55,21 +56,21 @@ export default function FullPanelChat({ voiceEngine }: Props) {
 
   // Local UI state
   const [inputText, setInputText] = React.useState('');
-  const [isPhoneMode, setIsPhoneMode] = React.useState(true);
+  const [isRealtimeCallVisible, setIsRealtimeCallVisible] = React.useState(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const micPulseAnim = useRef(new Animated.Value(1)).current;
 
-  const { status, interimText, startListening, stopListening, speakText, interruptSpeaking, setOnFinalText } = voiceEngine;
+  const { status, interimText, startListening, stopListening, speakText, setOnFinalText } = voiceEngine;
 
-  // 注册最终文本回调
+  // StepAudio ASR 只负责把语音填入输入框，用户确认后再发送给 GLM。
   useEffect(() => {
     setOnFinalText((text: string) => {
-      handleSendMessage(text);
+      setInputText(current => current ? `${current} ${text}` : text);
     });
     return () => setOnFinalText(null);
-  }, [isProcessing]);
+  }, [setOnFinalText]);
 
   // 面板打开动画 + 首次问候
   useEffect(() => {
@@ -90,11 +91,6 @@ export default function FullPanelChat({ voiceEngine }: Props) {
       };
       addMessage(greetingBubble);
 
-      if (isPhoneMode) {
-        speakText(greeting.reply, true);
-      }
-    } else if (isPhoneMode) {
-      startListening();
     }
   }, []);
 
@@ -149,7 +145,7 @@ export default function FullPanelChat({ voiceEngine }: Props) {
     setIsProcessing(true);
 
     try {
-      const response = await chatService.sendMessage(text.trim());
+      const response = await chatService.sendMessage(text.trim(), phase);
       const navigationActions = executeActions(response.actions);
 
       const assistantBubble: ChatBubble = {
@@ -168,8 +164,6 @@ export default function FullPanelChat({ voiceEngine }: Props) {
       if (hasGenerateRoute) {
         // 生成路线
         setPhase('generating');
-        await speakText(response.reply, false);
-
         const selectedIds = response.actions
           .find(a => a.type === 'select_attractions')?.value as string[] | undefined;
         const summary = generateRoute(selectedIds);
@@ -179,9 +173,6 @@ export default function FullPanelChat({ voiceEngine }: Props) {
         // 切换到悬浮模式并跳转
         setPhase('presenting');
         navigation.navigate('CustomTab', { screen: 'RoutePlan' });
-      } else {
-        // 普通回复，朗读
-        await speakText(response.reply, true);
       }
     } catch (error) {
       console.error('Send message error:', error);
@@ -192,7 +183,6 @@ export default function FullPanelChat({ voiceEngine }: Props) {
         timestamp: Date.now(),
       };
       addMessage(errorBubble);
-      await speakText('出了点小问题，您再说一次好吗？', true);
     } finally {
       setIsProcessing(false);
     }
@@ -208,28 +198,16 @@ export default function FullPanelChat({ voiceEngine }: Props) {
   // 麦克风按钮
   const handleMicPress = useCallback(async () => {
     if (status === 'listening') {
-      stopListening();
+      await stopListening();
     } else {
       await startListening();
     }
   }, [status, startListening, stopListening]);
 
-  // 切换电话模式
-  const handleTogglePhoneMode = useCallback(async () => {
-    const newMode = !isPhoneMode;
-    setIsPhoneMode(newMode);
-    if (newMode) {
-      await startListening();
-    } else {
-      stopListening();
-      voiceService.stopSpeaking();
-    }
-  }, [isPhoneMode, startListening, stopListening]);
-
   // 重播消息
   const handleReplay = useCallback(async (text: string) => {
     voiceService.stopSpeaking();
-    await speakText(text, true);
+    await speakText(text, false);
   }, [speakText]);
 
   return (
@@ -243,21 +221,13 @@ export default function FullPanelChat({ voiceEngine }: Props) {
               <Text style={[typography.h3, { marginLeft: 8 }]}>小猫助手</Text>
             </View>
             <View style={styles.headerRight}>
-              <TouchableOpacity
-                style={[styles.modeToggle, isPhoneMode && styles.modeToggleActive]}
-                onPress={handleTogglePhoneMode}
-              >
+              <TouchableOpacity style={styles.modeToggleActive} onPress={() => setIsRealtimeCallVisible(true)}>
                 <Ionicons
-                  name={isPhoneMode ? 'call' : 'call-outline'}
+                  name="call"
                   size={scaleIcon(16)}
-                  color={isPhoneMode ? '#fff' : colors.textSecondary}
+                  color="#fff"
                 />
-                <Text style={[
-                  typography.caption,
-                  { marginLeft: 4, color: isPhoneMode ? '#fff' : colors.textSecondary },
-                ]}>
-                  电话模式
-                </Text>
+                <Text style={[typography.caption, { marginLeft: 4, color: '#fff' }]}>语音通话</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={handleClose} style={styles.closeBtn}>
                 <Ionicons name="close" size={scaleIcon(24)} color={colors.textSecondary} />
@@ -276,7 +246,8 @@ export default function FullPanelChat({ voiceEngine }: Props) {
                 { transform: [{ scale: status === 'listening' ? micPulseAnim : 1 }] },
               ]} />
               <Text style={[typography.caption, { marginLeft: 6 }]}>
-                {status === 'listening' ? '正在聆听...' :
+                {status === 'listening' ? '正在录音，再点一次完成...' :
+                 status === 'transcribing' ? 'StepAudio 2.5 正在识别...' :
                  status === 'speaking' ? '小猫正在说话...' :
                  '连接错误'}
               </Text>
@@ -352,35 +323,6 @@ export default function FullPanelChat({ voiceEngine }: Props) {
 
             {/* 底部输入区 */}
             <View style={styles.inputArea}>
-              {isPhoneMode ? (
-                <TouchableOpacity
-                  style={styles.phoneModeInput}
-                  onPress={status === 'speaking' ? interruptSpeaking : handleMicPress}
-                  activeOpacity={0.7}
-                >
-                  <Animated.View style={[
-                    styles.listeningIndicator,
-                    status === 'speaking' && styles.speakingIndicator,
-                    { transform: [{ scale: status === 'listening' ? micPulseAnim : 1 }] },
-                  ]}>
-                    <Ionicons
-                      name={status === 'speaking' ? 'volume-high' : 'mic'}
-                      size={scaleIcon(32)}
-                      color={status === 'listening' ? '#4CAF50' : status === 'speaking' ? '#FF9800' : colors.primary}
-                    />
-                  </Animated.View>
-                  <Text style={[typography.caption, { marginTop: 8, textAlign: 'center' }]}>
-                    {status === 'listening' ? '正在聆听，请说话...' :
-                     status === 'speaking' ? '点击此处可打断' :
-                     '准备聆听...'}
-                  </Text>
-                  {interimText.length > 0 && (
-                    <Text style={[typography.bodySmall, { marginTop: 4, color: colors.textSecondary }]}>
-                      "{interimText}"
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              ) : (
                 <View style={styles.textModeInput}>
                   <TextInput
                     style={[styles.textInput, typography.body]}
@@ -391,9 +333,13 @@ export default function FullPanelChat({ voiceEngine }: Props) {
                     onSubmitEditing={handleTextSend}
                     returnKeyType="send"
                   />
-                  <TouchableOpacity style={styles.micSmallBtn} onPress={handleMicPress}>
+                  <TouchableOpacity
+                    style={[styles.micSmallBtn, status === 'listening' && styles.micSmallBtnActive]}
+                    onPress={handleMicPress}
+                    disabled={status === 'transcribing'}
+                  >
                     <Ionicons
-                      name={status === 'listening' ? 'mic' : 'mic-outline'}
+                      name={status === 'listening' ? 'stop' : 'mic-outline'}
                       size={scaleIcon(22)}
                       color={status === 'listening' ? '#E53935' : colors.textSecondary}
                     />
@@ -406,11 +352,12 @@ export default function FullPanelChat({ voiceEngine }: Props) {
                     <Ionicons name="send" size={scaleIcon(20)} color="#fff" />
                   </TouchableOpacity>
                 </View>
-              )}
+              {!!interimText && <Text style={styles.asrHint}>{interimText}</Text>}
             </View>
           </KeyboardAvoidingView>
         </Animated.View>
       </View>
+      <RealtimeCallPanel visible={isRealtimeCallVisible} onClose={() => setIsRealtimeCallVisible(false)} />
     </Modal>
   );
 }
@@ -440,12 +387,11 @@ const styles = StyleSheet.create({
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center' },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  modeToggle: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 10, paddingVertical: 5,
-    borderRadius: 14, backgroundColor: '#F5F5F5',
+  modeToggle: { flexDirection: 'row', alignItems: 'center' },
+  modeToggleActive: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11, paddingVertical: 7,
+    borderRadius: 16, backgroundColor: colors.primary,
   },
-  modeToggleActive: { backgroundColor: colors.primary },
   closeBtn: { padding: 4 },
   statusBar: {
     flexDirection: 'row', alignItems: 'center',
@@ -485,6 +431,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 10, maxHeight: 100,
   },
   micSmallBtn: { padding: 8 },
+  micSmallBtnActive: { backgroundColor: '#FFEBEE', borderRadius: 20 },
+  asrHint: { fontSize: 12, color: colors.textSecondary, marginTop: 7, marginLeft: 8 },
   sendBtn: {
     width: 40, height: 40, borderRadius: 20,
     backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center',

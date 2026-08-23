@@ -1,7 +1,7 @@
-/**
- * 本地旅行助手。
- * 当前版本不连接任何第三方大模型，避免在客户端暴露 API 密钥。
- */
+/** GLM 5.3 中转站旅行助手；远端未配置时保留本地降级能力。 */
+import { sendAIChat, type AIChatMessage } from '../services/aiService';
+import { buildAssistantContext } from './assistantContext';
+import { ApiError } from '../services/apiClient';
 import { tryParseLocalAssistantCommand } from './localAssistantAgent';
 
 export interface AIAction {
@@ -26,23 +26,39 @@ function normalizeStage(value?: string): LocalStage {
 }
 
 class ChatService {
+  private history: AIChatMessage[] = [];
+
   resetConversation(): void {
-    // 本地解析器无远端会话状态。
+    this.history = [];
   }
 
   async sendMessage(userText: string, phaseContext?: string): Promise<AIResponse> {
-    const local = tryParseLocalAssistantCommand(userText, normalizeStage(phaseContext));
-    if (local) return local;
-    return {
-      reply: '我现在可以帮您设置天数、人数、预算、酒店和交通偏好。实时景点、酒店与餐厅请在北京探索页选择。',
-      actions: [],
-      stage: 'collecting',
-    };
+    const userMessage: AIChatMessage = { role: 'user', content: userText };
+    const nextHistory = [...this.history, userMessage].slice(-30);
+    try {
+      const response = await sendAIChat(nextHistory, buildAssistantContext(), normalizeStage(phaseContext));
+      const assistantMessage: AIChatMessage = { role: 'assistant', content: response.reply };
+      this.history = [...nextHistory, assistantMessage].slice(-30);
+      return response;
+    } catch (error) {
+      console.warn('GLM assistant unavailable, using local fallback:', error);
+      const local = tryParseLocalAssistantCommand(userText, normalizeStage(phaseContext));
+      const fallback = local || {
+        reply: error instanceof ApiError && error.code === 'AI_NOT_CONFIGURED'
+          ? 'GLM 5.3 的接口位置已经接好，填写中转站地址和 API Key 后就会启用。现在我仍可以先帮您设置天数、人数、预算、酒店和交通偏好。'
+          : 'AI 服务暂时没有响应。您可以稍后重试，或先在北京探索页选择景点、酒店与餐厅。',
+        actions: [],
+        stage: 'collecting' as const,
+      };
+      const assistantMessage: AIChatMessage = { role: 'assistant', content: fallback.reply };
+      this.history = [...nextHistory, assistantMessage].slice(-30);
+      return fallback;
+    }
   }
 
   getGreeting(): AIResponse {
     return {
-      reply: '您好！我是旅行助手。北京的景点、酒店和餐厅会从实时服务加载，您也可以告诉我出行天数和交通偏好。',
+      reply: '您好！我是旅行助手。您可以打字、点击麦克风转成文字，或者直接使用电话式语音和我聊北京行程。',
       actions: [],
       stage: 'collecting',
     };

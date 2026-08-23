@@ -1,16 +1,9 @@
 node_modules/
-.DS_Store
-*.log
-.idea/
-.vscode/
-**/*(1).*
-**/*(1)
 .expo/
 .vercel/
 dist/
 ios/Pods/
 ios/build/
-ios/.xcode.env.local
 android/.gradle/
 android/app/build/
 
@@ -20,6 +13,19 @@ android/app/build/
 
 __pycache__/
 *.pyc
+.venv/
+.vercel
 
+# Finder/聊天软件下载产生的重复副本，不参与构建。
+**/*(1).*
+**/*(1)
+
+# 本机 IDE 状态与本地签名文件。
+**/xcuserdata/
 *.xcuserstate
-xcuserdata/
+.xcode.env.local
+*.keystore
+*.jks
+
+# Python 打包产生的本地元数据。
+*.egg-info/
