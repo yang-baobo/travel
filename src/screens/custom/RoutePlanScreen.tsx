@@ -23,6 +23,7 @@ import { colors } from '../../theme/colors';
 import { spacing, borderRadius, shadow } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
 import { CustomStackParamList, ScheduleItem, TransportMode, Flight, FlightClass, LuggageOption, RoomType, Hotel, TimePeriod } from '../../types';
+import { TripHotelContext } from '../../types/hotel';
 import { useRouteStore } from '../../store/useRouteStore';
 import { useFavoriteStore } from '../../store/useFavoriteStore';
 import { usePreferenceStore } from '../../store/usePreferenceStore';
@@ -44,11 +45,18 @@ import {
 } from '../../services/routeOptimizationService';
 import { calculateRouteConvenience } from '../../utils/recommendationEngine';
 import { getAirportHandlingTime } from '../../utils/routeGenerator';
+import { isSameTripHotelContext } from '../../domain/tripHotel';
+import { formatHotelReferencePrice } from '../../services/travelData/hotel/hotelUiModel';
+import { hydrateSelectedHotelGeography } from '../../services/travelData/hotel/HotelGeoService';
 import { MEAL_WINDOWS, MEAL_RHYTHM, MIN_MEAL_GAP, MEAL_DURATION, HOTEL_BREAKFAST_ID,
          isInMealWindow, getHotelBreakfastOptions, shouldInsertMeal, shouldPreemptForMeal,
          buildMealScheduleItem, getBreakfastHotelForDay } from '../../utils/mealScheduler';
 
 type Nav = NativeStackNavigationProp<CustomStackParamList, 'RoutePlan'>;
+
+// 旧深圳酒店只允许显式开发 fixture 模式；正常酒店选择始终进入 FlyAI 页面。
+const ENABLE_STATIC_HOTEL_FIXTURES = __DEV__
+  && process.env.EXPO_PUBLIC_ENABLE_STATIC_HOTEL_FIXTURES === 'true';
 
 // ===== Time Utilities =====
 function addMinutes(time: string, mins: number): string {
@@ -175,7 +183,7 @@ const DAY_THEME_CONFIG: Record<DayTheme, { label: string; icon: string; attrRati
 
 export default function RoutePlanScreen() {
   const navigation = useNavigation<Nav>();
-  const { routeStops } = useRouteStore();
+  const { routeStops, selectedHotel, selectedHotelContext, clearSelectedHotel, reconcileSelectedHotelContext } = useRouteStore();
   const prefStore = usePreferenceStore();
   const isLocal = prefStore.isInDestCity;
 
@@ -193,9 +201,7 @@ export default function RoutePlanScreen() {
           }
           break;
         case 'change_hotel':
-          if (payload?.day && payload?.hotelId) {
-            setSelectedHotelIds(prev => ({ ...prev, [payload.day]: payload.hotelId }));
-          }
+          // Phase 4 仅允许用户在真实酒店页手动选择，AI 不再写入静态酒店 ID。
           break;
         case 'add_attraction': {
           if (payload?.attractionId) {
@@ -376,6 +382,41 @@ export default function RoutePlanScreen() {
   // Travel date
   const [travelStartDate, setTravelStartDate] = useState(prefStore.travelStartDate);
   const [travelReturnDate, setTravelReturnDate] = useState(prefStore.travelReturnDate);
+  const tripHotelContext = useMemo<TripHotelContext>(() => ({
+    destination: prefStore.selectedCity,
+    checkInDate: travelStartDate,
+    checkOutDate: travelReturnDate,
+  }), [prefStore.selectedCity, travelReturnDate, travelStartDate]);
+  const activeSelectedHotel = selectedHotel && isSameTripHotelContext(selectedHotelContext, tripHotelContext)
+    ? selectedHotel
+    : null;
+
+  useEffect(() => {
+    if (prefStore.travelStartDate !== travelStartDate) prefStore.setTravelStartDate(travelStartDate);
+    if (prefStore.travelReturnDate !== travelReturnDate) prefStore.setTravelReturnDate(travelReturnDate);
+    if (prefStore.travelDays !== selectedDays) prefStore.setTravelDays(selectedDays);
+    reconcileSelectedHotelContext(tripHotelContext);
+  }, [
+    prefStore,
+    reconcileSelectedHotelContext,
+    selectedDays,
+    travelReturnDate,
+    travelStartDate,
+    tripHotelContext,
+  ]);
+
+  useEffect(() => {
+    if (activeSelectedHotel?.geoStatus === 'unresolved') {
+      void hydrateSelectedHotelGeography(activeSelectedHotel.id, tripHotelContext);
+    }
+  }, [activeSelectedHotel?.geoStatus, activeSelectedHotel?.id, tripHotelContext]);
+
+  const openRealHotelSearch = useCallback(() => {
+    prefStore.setTravelStartDate(travelStartDate);
+    prefStore.setTravelReturnDate(travelReturnDate);
+    prefStore.setTravelDays(selectedDays);
+    navigation.navigate('HotelList');
+  }, [navigation, prefStore, selectedDays, travelReturnDate, travelStartDate]);
 
   // ===== 航班选择 =====
   const [departureFlight, setDepartureFlight] = useState<Flight | null>(null);
@@ -714,6 +755,7 @@ export default function RoutePlanScreen() {
   // because one amenity is missing.
   const perDayHotels = useMemo<Record<number, HotelRecommendation[]>>(() => {
     const result: Record<number, HotelRecommendation[]> = {};
+    if (!ENABLE_STATIC_HOTEL_FIXTURES) return result;
     const favoriteHotelIds = useFavoriteStore.getState().favoriteHotelIds;
     const amenityPrefs = prefStore.hotelAmenityPrefs;
     const levelPref = prefStore.hotelLevelPref;
@@ -840,12 +882,12 @@ export default function RoutePlanScreen() {
       type: 'restaurant' as const,
       subtitle: `餐厅 · ${rest.cuisineType} · ${getZoneName(rest.zone)}`,
     }));
-    const hotelOptions = hotels.map(hotel => ({
+    const hotelOptions = ENABLE_STATIC_HOTEL_FIXTURES ? hotels.map(hotel => ({
       id: hotel.id,
       name: hotel.name,
       type: 'hotel' as const,
       subtitle: `酒店 · ${getHotelLevelName(hotel.level)} · ${getZoneName(hotel.zone)}`,
-    }));
+    })) : [];
     return [...attractionOptions, ...restaurantOptions, ...hotelOptions];
   }, []);
 
@@ -1570,6 +1612,7 @@ export default function RoutePlanScreen() {
 
   // ===== 酒店选择后自动选择推荐房型 =====
   useEffect(() => {
+    if (!ENABLE_STATIC_HOTEL_FIXTURES) return;
     const newRooms: Record<number, RoomType> = { ...selectedRoomTypes };
     Object.entries(selectedHotelIds).forEach(([dayStr, hotelId]) => {
       const day = parseInt(dayStr);
@@ -1586,6 +1629,7 @@ export default function RoutePlanScreen() {
 
   // Filtered hotels for search modal
   const filteredHotels = useMemo(() => {
+    if (!ENABLE_STATIC_HOTEL_FIXTURES) return [];
     let list = [...hotels];
     if (hotelFilterLevel !== 'all') {
       list = list.filter(h => h.level === hotelFilterLevel);
@@ -1620,6 +1664,7 @@ export default function RoutePlanScreen() {
 
   // ===== Auto-recommend hotels on mount / preference change (餐厅不自动推荐，保留手动选择) =====
   useEffect(() => {
+    if (!ENABLE_STATIC_HOTEL_FIXTURES) return;
     // Auto-select hotels only
     if (prefStore.needHotel && selectedDays > 1) {
       setSelectedHotelIds(prev => {
@@ -2180,6 +2225,8 @@ export default function RoutePlanScreen() {
   }, [schedule, groupSize, selectedHotelIds]);
   const totalHotelNights = Math.max(0, selectedDays - 1) + extraNights;
   const hotelCost = useMemo(() => {
+    // FlyAI 当前仅返回搜索参考价，并非可结算房价。正常模式不把它计入订单总价。
+    if (!ENABLE_STATIC_HOTEL_FIXTURES) return 0;
     let total = 0;
     for (let d = 1; d <= totalHotelNights; d++) {
       const hotelId = selectedHotelIds[d];
@@ -2313,7 +2360,7 @@ export default function RoutePlanScreen() {
       totalPrice,
       durationDays: selectedDays,
       attractionIds: orderedIds,
-      hotelId: selectedHotelIds[1] || undefined,
+      hotelId: activeSelectedHotel?.id,
       guideId: selectedGuideId || undefined,
       restaurantIds: [...new Set(Object.values(selectedRestaurants))],
     });
@@ -2883,6 +2930,97 @@ export default function RoutePlanScreen() {
           </View>
         </View>
 
+        {/* ===== Canonical FlyAI Hotel Selection ===== */}
+        {(prefStore.needHotel || activeSelectedHotel) && (
+          <View style={styles.section} testID="route-selected-hotel-section">
+            <View style={styles.realHotelHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={typography.h2}>住宿安排</Text>
+                <Text style={[typography.caption, { marginTop: 4 }]}>酒店数据来自飞猪，选择后会保存到当前行程</Text>
+              </View>
+              <View style={styles.fliggyBadge}>
+                <Text style={styles.fliggyBadgeText}>飞猪</Text>
+              </View>
+            </View>
+
+            {activeSelectedHotel ? (
+              <View style={styles.realHotelCard} testID="route-selected-hotel-card">
+                <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                  {activeSelectedHotel.imageUrl ? (
+                    <Image source={{ uri: activeSelectedHotel.imageUrl }} style={styles.realHotelImage} resizeMode="cover" />
+                  ) : (
+                    <View style={[styles.realHotelImage, styles.realHotelImagePlaceholder]}>
+                      <Ionicons name="bed-outline" size={28} color={colors.textSecondary} />
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text style={[typography.body, { fontWeight: '700' }]} numberOfLines={2}>{activeSelectedHotel.name}</Text>
+                    {(activeSelectedHotel.starLabel || activeSelectedHotel.star !== null) && (
+                      <Text style={[typography.caption, { color: colors.primary, marginTop: 4 }]}>
+                        {activeSelectedHotel.starLabel || `${activeSelectedHotel.star}星`}
+                      </Text>
+                    )}
+                    {activeSelectedHotel.address && (
+                      <Text style={[typography.caption, { marginTop: 4 }]} numberOfLines={2}>{activeSelectedHotel.address}</Text>
+                    )}
+                    <Text style={[typography.bodySmall, { color: colors.priceRed, fontWeight: '700', marginTop: 6 }]}>
+                      {formatHotelReferencePrice(activeSelectedHotel)}
+                      <Text style={[typography.caption, { color: colors.textSecondary }]}>
+                        {activeSelectedHotel.referencePrice === null ? ' · 前往飞猪查看' : ' · 飞猪参考价'}
+                      </Text>
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.realHotelNotice}>
+                  <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
+                  <Text style={[typography.caption, { flex: 1 }]}>
+                    参考价可能变化，不代表最终成交价；房型与库存请前往飞猪确认。
+                    {activeSelectedHotel.geoStatus === 'verified'
+                      ? '酒店位置已经高德核验，北京实时路线会使用该坐标。'
+                      : activeSelectedHotel.geoStatus === 'resolving'
+                        ? '正在通过高德核验酒店位置。'
+                        : '酒店位置尚未核验，系统不会用默认坐标生成首尾程。'}
+                  </Text>
+                </View>
+                <View style={styles.realHotelActions}>
+                  <TouchableOpacity
+                    style={styles.realHotelSecondaryBtn}
+                    onPress={clearSelectedHotel}
+                    accessibilityRole="button"
+                    accessibilityLabel={`移除酒店 ${activeSelectedHotel.name}`}
+                  >
+                    <Text style={styles.realHotelSecondaryBtnText}>移除</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.realHotelPrimaryBtn}
+                    onPress={openRealHotelSearch}
+                    accessibilityRole="button"
+                    accessibilityLabel="更换飞猪酒店"
+                  >
+                    <Text style={styles.realHotelPrimaryBtnText}>更换酒店</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.realHotelEmptyCard}
+                onPress={openRealHotelSearch}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="选择飞猪真实酒店"
+                testID="route-select-real-hotel"
+              >
+                <Ionicons name="bed-outline" size={26} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[typography.body, { fontWeight: '600' }]}>选择真实酒店</Text>
+                  <Text style={typography.caption}>按当前目的地、日期和预算搜索飞猪酒店</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.primary} />
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         {/* ===== Timeline Schedule ===== */}
         <View style={styles.section}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md }}>
@@ -2903,7 +3041,9 @@ export default function RoutePlanScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs, padding: spacing.sm, backgroundColor: '#E8F5E9', borderRadius: 8, marginBottom: spacing.md }}>
               <Ionicons name="navigate" size={16} color="#2E7D32" />
               <Text style={[typography.caption, { color: '#2E7D32', flex: 1 }]}>
-                路线已智能优化 · 以酒店为起终点，减少回头路
+                {activeSelectedHotel
+                  ? `已选择 ${activeSelectedHotel.name} · ${activeSelectedHotel.geoStatus === 'verified' ? '高德坐标已核验' : '酒店首尾程等待位置核验'}`
+                  : '路线已智能优化 · 暂未设置住宿锚点'}
               </Text>
             </View>
           )}
@@ -3279,7 +3419,7 @@ export default function RoutePlanScreen() {
                 )}
 
                 {/* Per-day hotel recommendation */}
-                {selectedDays > 1 && dayNum < selectedDays && (
+                {ENABLE_STATIC_HOTEL_FIXTURES && selectedDays > 1 && dayNum < selectedDays && (
                   <View style={styles.hotelSection}>
                     <Text style={[typography.bodySmall, { fontWeight: '600', marginBottom: spacing.sm }]}>
                       第{dayNum}晚住宿
@@ -3377,7 +3517,7 @@ export default function RoutePlanScreen() {
           })}
 
           {/* 额外住宿晚 */}
-          {extraNights > 0 && Array.from({ length: extraNights }, (_, i) => {
+          {ENABLE_STATIC_HOTEL_FIXTURES && extraNights > 0 && Array.from({ length: extraNights }, (_, i) => {
             const nightNum = (selectedDays - 1) + i + 1; // 额外的晚序号（接在常规住宿后面）
             const dayLabel = `额外第${i + 1}晚`;
             return (
@@ -3461,14 +3601,14 @@ export default function RoutePlanScreen() {
           })}
 
           {/* 多加一晚按钮 */}
-          <TouchableOpacity
+          {ENABLE_STATIC_HOTEL_FIXTURES && <TouchableOpacity
             style={styles.addExtraNightBtn}
             onPress={() => setExtraNights(n => n + 1)}
             activeOpacity={0.7}
           >
             <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
             <Text style={[typography.body, { color: colors.primary, fontWeight: '600' }]}>多加一晚住宿</Text>
-          </TouchableOpacity>
+          </TouchableOpacity>}
         </View>
 
         {/* ===== Guide ===== */}
@@ -3699,11 +3839,7 @@ export default function RoutePlanScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.extraCard}
-              onPress={() => {
-                const lastDay = selectedDays;
-                setHotelSearchDay(lastDay);
-                setShowHotelSearch(true);
-              }}
+              onPress={openRealHotelSearch}
             >
               <Ionicons name="swap-horizontal-outline" size={22} color={colors.primary} />
               <Text style={[typography.bodySmall, { fontWeight: '600' }]}>换酒店</Text>
@@ -3717,7 +3853,11 @@ export default function RoutePlanScreen() {
 
       {/* Bottom bar */}
       <View style={styles.bar}>
-        <View><Text style={typography.caption}>合计 ({groupSize}人)</Text><Text style={typography.price}>{formatPrice(totalPrice)}</Text></View>
+        <View>
+          <Text style={typography.caption}>合计 ({groupSize}人)</Text>
+          <Text style={typography.price}>{formatPrice(totalPrice)}</Text>
+          {activeSelectedHotel && <Text style={[typography.caption, { fontSize: 10 }]}>未含酒店实时房价</Text>}
+        </View>
         <TouchableOpacity onPress={handleSettlement} activeOpacity={0.8}>
           <LinearGradient colors={colors.gradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.barBtn}>
             <Text style={styles.barBtnText}>去结算</Text>
@@ -4049,7 +4189,7 @@ export default function RoutePlanScreen() {
       </Modal>
 
       {/* ===== Hotel Detail Modal (房型/价格/图片) ===== */}
-      <Modal visible={showHotelDetail} transparent animationType="slide" onRequestClose={() => setShowHotelDetail(false)}>
+      <Modal visible={ENABLE_STATIC_HOTEL_FIXTURES && showHotelDetail} transparent animationType="slide" onRequestClose={() => setShowHotelDetail(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { maxHeight: '80%' }]}>
             {(() => {
@@ -4144,7 +4284,7 @@ export default function RoutePlanScreen() {
       </Modal>
 
       {/* ===== Hotel Search Modal ===== */}
-      <Modal visible={showHotelSearch} transparent animationType="slide" onRequestClose={() => setShowHotelSearch(false)}>
+      <Modal visible={ENABLE_STATIC_HOTEL_FIXTURES && showHotelSearch} transparent animationType="slide" onRequestClose={() => setShowHotelSearch(false)}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <Pressable style={styles.modalOverlay} onPress={() => Keyboard.dismiss()}>
             <Pressable style={[styles.modalContent, { maxHeight: '85%' }]} onPress={e => e.stopPropagation()}>
@@ -4933,6 +5073,19 @@ const styles = StyleSheet.create({
   hotelSection: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md, marginTop: spacing.sm },
   hotelMiniCard: { flexDirection: 'row', alignItems: 'center', padding: spacing.md, borderRadius: borderRadius.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.xs, gap: spacing.sm, backgroundColor: colors.surface },
   hotelMiniCardActive: { borderColor: colors.primary, backgroundColor: `${colors.primary}06` },
+  realHotelHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, marginBottom: spacing.md },
+  fliggyBadge: { backgroundColor: '#FF5000', borderRadius: borderRadius.full, paddingHorizontal: spacing.sm, paddingVertical: 4 },
+  fliggyBadgeText: { color: '#FFF', fontSize: 11, fontWeight: '700' },
+  realHotelCard: { backgroundColor: colors.surface, borderRadius: borderRadius.lg, padding: spacing.lg, borderWidth: 1.5, borderColor: colors.primary, ...shadow.light },
+  realHotelImage: { width: 88, height: 76, borderRadius: borderRadius.md, backgroundColor: colors.border },
+  realHotelImagePlaceholder: { alignItems: 'center', justifyContent: 'center' },
+  realHotelNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs, backgroundColor: colors.background, borderRadius: borderRadius.md, padding: spacing.sm, marginTop: spacing.md },
+  realHotelActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+  realHotelSecondaryBtn: { minHeight: 48, flex: 1, alignItems: 'center', justifyContent: 'center', borderRadius: borderRadius.full, borderWidth: 1.5, borderColor: colors.border },
+  realHotelSecondaryBtnText: { color: colors.textSecondary, fontWeight: '600' },
+  realHotelPrimaryBtn: { minHeight: 48, flex: 2, alignItems: 'center', justifyContent: 'center', borderRadius: borderRadius.full, backgroundColor: colors.primary },
+  realHotelPrimaryBtnText: { color: '#FFF', fontWeight: '700' },
+  realHotelEmptyCard: { minHeight: 72, flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.lg, borderRadius: borderRadius.lg, borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.primary, backgroundColor: `${colors.primary}06` },
   airportToggleCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, borderRadius: borderRadius.md, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.surface, marginTop: spacing.md },
   airportToggleCardActive: { borderColor: colors.primary, backgroundColor: `${colors.primary}06` },
   addExtraNightBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, paddingVertical: 14, marginTop: spacing.md, borderRadius: borderRadius.md, borderWidth: 1.5, borderColor: colors.primary, borderStyle: 'dashed', backgroundColor: `${colors.primary}06` },

@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RouteStop, RouteSource, DailyGuideAssignment } from '../types';
+import { HotelGeoMatchLevel, HotelGeoStatus, TravelHotel, TripHotelContext } from '../types/hotel';
+import { isSameTripHotelContext, normalizeTripHotelContext } from '../domain/tripHotel';
 
 export interface RouteUserWeights {
   attraction: number;
@@ -76,6 +78,8 @@ interface RouteState {
   travelDays: number;
   userWeights: RouteUserWeights;
   userProfile: RouteUserProfile;
+  selectedHotel: TravelHotel | null;
+  selectedHotelContext: TripHotelContext | null;
 
   setRouteSource: (source: RouteSource) => void;
   setCurrentRouteId: (id: string | null) => void;
@@ -88,6 +92,21 @@ interface RouteState {
   learnFromRestaurantChange: (changedToHigherRated: boolean) => void;
   learnFromOvertimeDecision: (acceptedOvertimeMinutes: number, accepted: boolean) => void;
   learnFromTimePreference: (prefersLateStart: boolean, prefersEarlyEnd: boolean) => void;
+  selectHotel: (hotel: TravelHotel, context: TripHotelContext) => void;
+  updateSelectedHotelGeography: (hotelId: string, update: {
+    latitude: number | null;
+    longitude: number | null;
+    coordinateSource: TravelHotel['coordinateSource'];
+    coordinateVerified: boolean;
+    geoStatus: HotelGeoStatus;
+    geoMatchLevel: HotelGeoMatchLevel | null;
+    geoConfidence: number | null;
+    amapPoiId: string | null;
+    geocodedAt: string | null;
+  }) => boolean;
+  clearSelectedHotel: () => void;
+  getSelectedHotelForTrip: (context: TripHotelContext) => TravelHotel | null;
+  reconcileSelectedHotelContext: (context: TripHotelContext) => void;
 
   // 自定义路线操作
   addStop: (stop: RouteStop) => void;
@@ -114,6 +133,8 @@ export const useRouteStore = create<RouteState>()(persist((set, get) => ({
   travelDays: 1,
   userWeights: { ...DEFAULT_USER_WEIGHTS },
   userProfile: { ...DEFAULT_USER_PROFILE },
+  selectedHotel: null,
+  selectedHotelContext: null,
 
   setRouteSource: (source) => set({ routeSource: source }),
   setCurrentRouteId: (id) => set({ currentRouteId: id }),
@@ -212,6 +233,66 @@ export const useRouteStore = create<RouteState>()(persist((set, get) => ({
       time: clampWeight(state.userWeights.time + ((prefersLateStart || prefersEarlyEnd) ? 0.03 : 0)),
     }),
   })),
+  selectHotel: (hotel, context) => set({
+    selectedHotel: {
+      ...hotel,
+      coordinateSource: hotel.coordinateSource ?? (
+        hotel.latitude !== null && hotel.longitude !== null ? 'provider' : null
+      ),
+      coordinateVerified: hotel.coordinateSource === 'amap' && hotel.coordinateVerified === true,
+      geoStatus: hotel.coordinateSource === 'amap' && hotel.coordinateVerified === true
+        ? 'verified'
+        : 'unresolved',
+      geoMatchLevel: hotel.coordinateSource === 'amap' && hotel.coordinateVerified === true
+        ? hotel.geoMatchLevel
+        : null,
+      geoConfidence: hotel.coordinateSource === 'amap' && hotel.coordinateVerified === true
+        ? hotel.geoConfidence
+        : null,
+      amapPoiId: hotel.coordinateSource === 'amap' && hotel.coordinateVerified === true
+        ? hotel.amapPoiId
+        : null,
+      geocodedAt: hotel.coordinateSource === 'amap' && hotel.coordinateVerified === true
+        ? hotel.geocodedAt
+        : null,
+    },
+    selectedHotelContext: normalizeTripHotelContext(context),
+  }),
+  updateSelectedHotelGeography: (hotelId, update) => {
+    const current = get().selectedHotel;
+    if (!current || current.id !== hotelId) return false;
+    const validVerifiedCoordinate = update.coordinateVerified
+      && update.coordinateSource === 'amap'
+      && update.latitude !== null
+      && update.longitude !== null
+      && Number.isFinite(update.latitude)
+      && Number.isFinite(update.longitude);
+    set({
+      selectedHotel: {
+        ...current,
+        ...update,
+        latitude: validVerifiedCoordinate ? update.latitude : null,
+        longitude: validVerifiedCoordinate ? update.longitude : null,
+        coordinateSource: validVerifiedCoordinate ? 'amap' : null,
+        coordinateVerified: validVerifiedCoordinate,
+        geoStatus: validVerifiedCoordinate ? 'verified' : update.geoStatus,
+      },
+    });
+    return true;
+  },
+  clearSelectedHotel: () => set({ selectedHotel: null, selectedHotelContext: null }),
+  getSelectedHotelForTrip: (context) => {
+    const state = get();
+    return state.selectedHotel && isSameTripHotelContext(state.selectedHotelContext, context)
+      ? state.selectedHotel
+      : null;
+  },
+  reconcileSelectedHotelContext: (context) => {
+    const state = get();
+    if (state.selectedHotel && !isSameTripHotelContext(state.selectedHotelContext, context)) {
+      set({ selectedHotel: null, selectedHotelContext: null });
+    }
+  },
 
   addStop: (stop) => {
     const current = get().routeStops;
@@ -267,6 +348,8 @@ export const useRouteStore = create<RouteState>()(persist((set, get) => ({
     travelDays: 1,
     userWeights: { ...DEFAULT_USER_WEIGHTS },
     userProfile: { ...DEFAULT_USER_PROFILE },
+    selectedHotel: null,
+    selectedHotelContext: null,
   }),
 }), {
   name: 'route-user-learning',

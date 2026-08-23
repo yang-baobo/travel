@@ -5,6 +5,7 @@ import type {
   TravelProviderStatus,
   TravelRoutesResponse,
 } from '../types/travel';
+import type { HotelGeoRequest, HotelGeoResponse } from '../types/hotel';
 
 export function fetchTravelConfig(): Promise<TravelProviderStatus> {
   return apiRequest<TravelProviderStatus>('/api/travel/config');
@@ -36,6 +37,14 @@ export function fetchTravelRoutes(
     destination: `${toLongitude},${toLatitude}`,
   });
   return apiRequest<TravelRoutesResponse>(`/api/travel/routes?${params.toString()}`, undefined, 12_000);
+}
+
+export function resolveTravelHotelGeography(payload: HotelGeoRequest): Promise<HotelGeoResponse> {
+  return apiRequest<HotelGeoResponse>('/api/travel/hotels/geocode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, 12_000);
 }
 
 export function buildAmapNavigationUrl(

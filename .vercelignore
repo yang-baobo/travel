@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+.vercel
+.git
+.expo
+node_modules
+dist
+ios
+android
+tests
+__pycache__
+*.pyc

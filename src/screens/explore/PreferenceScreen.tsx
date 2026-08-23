@@ -7,6 +7,8 @@ import {
   TouchableOpacity,
   TextInput,
   Modal,
+  Alert,
+  Switch,
   KeyboardAvoidingView,
   Platform,
   Keyboard,
@@ -21,7 +23,7 @@ import { typography } from '../../theme/typography';
 import { TransportPreference, HotelLevelPreference, BudgetPreference, HotelZonePreference, HotelAmenity, AirlineType, FlightClass, LuggageOption, HotelStayMode, FatigueLevel, DetourTolerance, TimeCostPreference, TransferComplexity } from '../../types';
 import { categories } from '../../data/categories';
 import { usePreferenceStore } from '../../store/usePreferenceStore';
-import { useAuthStore } from '../../store/useAuthStore';
+import { useBlindBoxStore } from '../../store/useBlindBoxStore';
 import { getHotelLevelName, getZoneName } from '../../utils/formatters';
 
 const TRANSPORT_OPTIONS: { key: TransportPreference; label: string; icon: string }[] = [
@@ -155,13 +157,16 @@ export default function PreferenceScreen() {
     dinnerLatestEndTime,
     setDinnerLatestEndTime,
     markPreferencesSet,
-    markPreferencesSetForUser,
   } = usePreferenceStore();
-  const { currentUser } = useAuthStore();
+  const blindBoxDraft = useBlindBoxStore(state => state.draftProfile);
+  const updateBlindBoxDraft = useBlindBoxStore(state => state.updateDraft);
+  const updateBlindBoxHard = useBlindBoxStore(state => state.updateHardConstraints);
+  const confirmBlindBoxProfile = useBlindBoxStore(state => state.confirmProfile);
 
   const [showHotelEdit, setShowHotelEdit] = useState(false);
   const [showTransportEdit, setShowTransportEdit] = useState(false);
   const [showFlightEdit, setShowFlightEdit] = useState(false);
+  const [showBlindBoxEdit, setShowBlindBoxEdit] = useState(false);
   const [customPriceAlert, setCustomPriceAlert] = useState('');
   const [useCustomPriceAlert, setUseCustomPriceAlert] = useState(false);
   const [customNearbyAlert, setCustomNearbyAlert] = useState('');
@@ -198,11 +203,7 @@ export default function PreferenceScreen() {
   }, [showHotelEdit]);
 
   const handleStart = () => {
-    if (currentUser) {
-      markPreferencesSetForUser(currentUser.id);
-    } else {
-      markPreferencesSet();
-    }
+    markPreferencesSet();
 
     const parent = navigation.getParent?.();
     if (parent) {
@@ -251,6 +252,31 @@ export default function PreferenceScreen() {
     `同日差价>${flightPreference.priceAlertThreshold}`,
     `临近日期>${flightPreference.nearbyDateAlertThreshold}`,
   ].filter(Boolean).join(' | ');
+
+  // 盲盒安全设置摘要
+  const hard = blindBoxDraft.hardConstraints;
+  const blindBoxSummary = [
+    `总预算¥${blindBoxDraft.totalTripBudget}`,
+    `步行≤${hard.maxWalkingMinutesPerDay}分钟/天`,
+    hard.dietaryAllergies.length ? `避开${hard.dietaryAllergies.join('、')}` : '',
+    hard.forbidden.length ? `不接受${hard.forbidden.join('、')}` : '',
+    hard.noNightActivity ? '不夜间' : '',
+    hard.mobilityLimitations.length ? '有行动限制' : '',
+  ].filter(Boolean).join(' | ');
+
+  const saveBlindBoxSafety = () => {
+    if (blindBoxDraft.totalTripBudget <= 0) {
+      Alert.alert('请填写预算', '总体旅行预算必须大于 0 元。');
+      return;
+    }
+    if (hard.maxWalkingMinutesPerSegment > hard.maxWalkingMinutesPerDay) {
+      Alert.alert('步行限制有冲突', '单段最大步行时间不能超过每天最大步行时间。');
+      return;
+    }
+    confirmBlindBoxProfile();
+    setShowBlindBoxEdit(false);
+    Alert.alert('盲盒安全设置已保存', 'AI 旅行盲盒会始终遵守这些限制。');
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right']}>
@@ -314,6 +340,19 @@ export default function PreferenceScreen() {
             <Text style={[typography.bodySmall, { flex: 1 }]}>{transportSummary}</Text>
             <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
           </TouchableOpacity>
+        </View>
+
+        {/* 盲盒安全设置(摘要+修改) */}
+        <View style={styles.section}>
+          <Text style={[typography.h3, styles.sectionTitle]}>盲盒安全设置</Text>
+          <TouchableOpacity style={styles.summaryCard} activeOpacity={0.7} onPress={() => setShowBlindBoxEdit(true)}>
+            <Ionicons name="shield-checkmark-outline" size={18} color={colors.primary} />
+            <Text style={[typography.bodySmall, { flex: 1 }]}>{blindBoxSummary}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+          </TouchableOpacity>
+          <Text style={[typography.caption, { marginTop: spacing.xs, color: colors.textSecondary }]}>
+            预算、过敏、雷点和行动限制是 AI 旅行盲盒的硬性边界，盲盒不会为了惊喜而突破
+          </Text>
         </View>
 
         {/* 航班偏好(摘要+修改) */}
@@ -836,6 +875,104 @@ export default function PreferenceScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* 盲盒安全设置编辑弹窗 */}
+      <Modal visible={showBlindBoxEdit} animationType="slide" transparent>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalKeyboardWrap}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={typography.h3}>盲盒安全设置</Text>
+                <TouchableOpacity onPress={() => setShowBlindBoxEdit(false)}><Ionicons name="close" size={24} color={colors.textPrimary} /></TouchableOpacity>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.modalScrollContent}>
+                <Text style={styles.modalLabel}>总体旅行预算（元）</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={String(blindBoxDraft.totalTripBudget)}
+                  onChangeText={value => updateBlindBoxDraft({ totalTripBudget: Math.max(0, Number(value.replace(/\D/g, '')) || 0) })}
+                  keyboardType="number-pad"
+                />
+
+                <Text style={styles.modalLabel}>过敏与饮食禁忌（用、分隔）</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={blindBoxDraft.hardConstraints.dietaryAllergies.join('、')}
+                  onChangeText={value => updateBlindBoxHard({ dietaryAllergies: value.split(/[、,，]/).map(item => item.trim()).filter(Boolean) })}
+                  placeholder="例如：花生、海鲜、生食"
+                  placeholderTextColor={colors.disabled}
+                />
+
+                <Text style={styles.modalLabel}>明确不接受的项目（用、分隔）</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={blindBoxDraft.hardConstraints.forbidden.join('、')}
+                  onChangeText={value => updateBlindBoxHard({ forbidden: value.split(/[、,，]/).map(item => item.trim()).filter(Boolean) })}
+                  placeholder="例如：高空、蹦极、密闭空间"
+                  placeholderTextColor={colors.disabled}
+                />
+
+                <Text style={styles.modalLabel}>行动能力限制（用、分隔）</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={blindBoxDraft.hardConstraints.mobilityLimitations.join('、')}
+                  onChangeText={value => updateBlindBoxHard({ mobilityLimitations: value.split(/[、,，]/).map(item => item.trim()).filter(Boolean) })}
+                  placeholder="例如：使用轮椅、不能爬楼"
+                  placeholderTextColor={colors.disabled}
+                />
+
+                <View style={[styles.switchRow, { marginTop: spacing.lg }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={typography.body}>不接受夜间活动</Text>
+                    <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>开启后，盲盒必须在 19:00 前结束</Text>
+                  </View>
+                  <Switch
+                    value={blindBoxDraft.hardConstraints.noNightActivity}
+                    onValueChange={value => updateBlindBoxHard({ noNightActivity: value })}
+                    trackColor={{ false: colors.border, true: colors.primaryLight }}
+                    thumbColor={blindBoxDraft.hardConstraints.noNightActivity ? colors.primary : '#FFF'}
+                  />
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: spacing.md, marginTop: spacing.lg }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.modalLabel}>每天最多步行（分钟）</Text>
+                    <TextInput
+                      style={styles.customInput}
+                      value={String(blindBoxDraft.hardConstraints.maxWalkingMinutesPerDay)}
+                      onChangeText={value => updateBlindBoxHard({ maxWalkingMinutesPerDay: Math.max(0, Number(value.replace(/\D/g, '')) || 0) })}
+                      keyboardType="number-pad"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.modalLabel}>单段最多步行（分钟）</Text>
+                    <TextInput
+                      style={styles.customInput}
+                      value={String(blindBoxDraft.hardConstraints.maxWalkingMinutesPerSegment)}
+                      onChangeText={value => updateBlindBoxHard({ maxWalkingMinutesPerSegment: Math.max(0, Number(value.replace(/\D/g, '')) || 0) })}
+                      keyboardType="number-pad"
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.rulePreview}>
+                  <Ionicons name="information-circle-outline" size={16} color={colors.primary} />
+                  <Text style={[typography.caption, { flex: 1, color: colors.textSecondary }]}>
+                    这些属于硬性限制，AI 盲盒不会为了惊喜而放宽；兴趣与节奏偏好继续沿用本页的其他设置。
+                  </Text>
+                </View>
+                <View style={{ height: 8 }} />
+              </ScrollView>
+              <TouchableOpacity style={styles.modalDoneBtn} onPress={saveBlindBoxSafety}>
+                <Text style={styles.modalDoneBtnText}>保存盲盒安全设置</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -978,6 +1115,7 @@ const styles = StyleSheet.create({
   modalDoneBtnText: { fontSize: 16, fontWeight: '600', color: '#FFF' },
   customInput: { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, fontSize: 14, color: colors.textPrimary, marginTop: spacing.sm },
   rulePreview: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, backgroundColor: `${colors.primary}08`, borderRadius: borderRadius.md, padding: spacing.md, marginTop: spacing.lg },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   // 日期选择按钮
   datePickBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.surface, borderRadius: borderRadius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginTop: spacing.xs },
   datePickText: { flex: 1, fontSize: 14, fontWeight: '500', color: colors.textPrimary },

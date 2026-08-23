@@ -1,9 +1,21 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { TransportPreference, HotelLevelPreference, BudgetPreference, CuisineType, HotelZonePreference, HotelPriceRange, HotelAmenity, TransportRule, FlightPreference, FlightClass, AirlineType, LuggageOption, TimePeriod, HotelStayMode, FatigueLevel, DetourTolerance, TimeCostPreference, TransferComplexity } from '../types';
 
-// 固定日期范围: 2026-03-25 ~ 2026-04-04
-const getDefaultStartDate = () => '2026-03-25';
-const getDefaultReturnDate = () => '2026-03-27';
+function getLocalDateAfter(days: number): string {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// 新行程默认使用未来日期，避免真实酒店供应商拒绝已经过期的固定演示日期。
+const getDefaultStartDate = () => getLocalDateAfter(1);
+const getDefaultReturnDate = () => getLocalDateAfter(3);
 
 const DEFAULT_TRANSPORT_RULE: TransportRule = {
   walkMaxKm: 1,
@@ -33,6 +45,9 @@ export interface PreferenceState {
   travelDays: number;
   groupSize: number;
   hasSetPreferences: boolean;
+
+  // 用户选择"稍后再说"后不再弹出首次偏好设置弹窗
+  preferencePromptDismissed: boolean;
 
   // 记录已完成偏好设置的用户ID列表
   completedUserIds: string[];
@@ -126,15 +141,17 @@ export interface PreferenceState {
   markPreferencesSet: () => void;
   markPreferencesSetForUser: (userId: string) => void;
   checkUserPreferences: (userId: string) => boolean;
+  dismissPreferencePrompt: () => void;
   resetPreferences: () => void;
 }
 
-export const usePreferenceStore = create<PreferenceState>((set, get) => ({
+export const usePreferenceStore = create<PreferenceState>()(persist((set, get) => ({
   selectedCategories: [],
   budgetRange: [200, 1000],
   travelDays: 3,
   groupSize: 2,
   hasSetPreferences: false,
+  preferencePromptDismissed: false,
   completedUserIds: [],
   selectedCity: '北京',
   transportPref: 'any',
@@ -240,6 +257,7 @@ export const usePreferenceStore = create<PreferenceState>((set, get) => ({
     }
   },
   checkUserPreferences: (userId) => get().completedUserIds.includes(userId),
+  dismissPreferencePrompt: () => set({ preferencePromptDismissed: true }),
   resetPreferences: () => set({
     selectedCity: '北京',
     selectedCategories: [],
@@ -247,6 +265,7 @@ export const usePreferenceStore = create<PreferenceState>((set, get) => ({
     travelDays: 3,
     groupSize: 2,
     hasSetPreferences: false,
+    preferencePromptDismissed: false,
     transportPref: 'any',
     hotelLevelPref: 'any',
     budgetPref: 'any',
@@ -276,4 +295,7 @@ export const usePreferenceStore = create<PreferenceState>((set, get) => ({
     dailyStartTime: '09:00',
     dailyEndTime: '19:00',
   }),
+}), {
+  name: 'travel-platform-preferences-v1',
+  storage: createJSONStorage(() => AsyncStorage),
 }));

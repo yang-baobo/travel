@@ -19,6 +19,8 @@ import SettlementScreen from '../screens/cart/SettlementScreen';
 import LivePlacesScreen from '../screens/explore/LivePlacesScreen';
 import LivePlaceDetailScreen from '../screens/explore/LivePlaceDetailScreen';
 import LiveItineraryScreen from '../screens/explore/LiveItineraryScreen';
+import TripProfileScreen from '../screens/blind-box/TripProfileScreen';
+import BlindBoxScreen from '../screens/blind-box/BlindBoxScreen';
 
 const Stack = createNativeStackNavigator<ExploreStackParamList>();
 
@@ -37,6 +39,8 @@ export default function ExploreStack() {
         component={HomeScreen}
         options={{ headerShown: false }}
       />
+      <Stack.Screen name="TripProfile" component={TripProfileScreen} options={{ title: '盲盒设置' }} />
+      <Stack.Screen name="BlindBox" component={BlindBoxScreen} options={{ title: 'AI 旅行盲盒' }} />
       <Stack.Screen
         name="LivePlaces"
         component={LivePlacesScreen}

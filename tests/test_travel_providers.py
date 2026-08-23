@@ -62,6 +62,33 @@ class TravelProviderTest(unittest.TestCase):
         self.assertEqual(transit["price"], 5)
         self.assertEqual(transit["detail"], "地铁1号线")
 
+    def test_positive_route_duration_never_rounds_down_to_failure_zero(self) -> None:
+        self.assertEqual(providers._duration_minutes("1"), 1)
+        self.assertEqual(providers._duration_minutes("29"), 1)
+        self.assertEqual(providers._duration_minutes("0"), 0)
+
+    def test_exact_place_name_is_promoted_ahead_of_unrelated_provider_ranking(self) -> None:
+        def poi(place_id: str, name: str) -> dict:
+            return {
+                "id": place_id,
+                "name": name,
+                "location": "116.397,39.908",
+                "address": "北京市东城区",
+                "adname": "东城区",
+                "type": "风景名胜",
+                "typecode": "110000",
+            }
+
+        with patch.object(providers, "_amap_request", return_value={
+            "count": "2",
+            "pois": [poi("B1", "颐和园"), poi("B2", "天坛公园")],
+        }):
+            result = providers.search_places("attraction", "天坛公园", 1, 1)
+
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["items"][0]["id"], "B2")
+        self.assertEqual(result["items"][0]["name"], "天坛公园")
+
 
 if __name__ == "__main__":
     unittest.main()

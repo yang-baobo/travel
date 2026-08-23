@@ -9,6 +9,9 @@ import RoutePlanScreen from '../screens/custom/RoutePlanScreen';
 import RouteDetailScreen from '../screens/route/RouteDetailScreen';
 import CartScreen from '../screens/cart/CartScreen';
 import SettlementScreen from '../screens/cart/SettlementScreen';
+import TripProfileScreen from '../screens/blind-box/TripProfileScreen';
+import BlindBoxScreen from '../screens/blind-box/BlindBoxScreen';
+import HotelListScreen from '../screens/explore/HotelListScreen';
 
 const Stack = createNativeStackNavigator<CustomStackParamList>();
 
@@ -27,9 +30,12 @@ export default function CustomStack() {
         component={LiveItineraryScreen}
         options={{ title: '我的实时路线' }}
       />
+      <Stack.Screen name="TripProfile" component={TripProfileScreen} options={{ title: '盲盒设置' }} />
+      <Stack.Screen name="BlindBox" component={BlindBoxScreen} options={{ title: 'AI 旅行盲盒' }} />
       <Stack.Screen name="LivePlaces" component={LivePlacesScreen} options={{ title: '添加北京地点' }} />
       <Stack.Screen name="LivePlaceDetail" component={LivePlaceDetailScreen} options={{ title: '地点详情' }} />
       <Stack.Screen name="LiveItinerary" component={LiveItineraryScreen} options={{ title: '我的实时路线' }} />
+      <Stack.Screen name="HotelList" component={HotelListScreen} options={{ title: '选择实时酒店' }} />
       <Stack.Screen
         name="RoutePlan"
         component={RoutePlanScreen}

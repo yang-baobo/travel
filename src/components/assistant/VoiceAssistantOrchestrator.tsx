@@ -3,7 +3,7 @@
  * 挂载在 AppNavigator 层，全局唯一
  */
 
-import React, { useEffect } from 'react';
+import React from 'react';
 import {
   TouchableOpacity,
   Text,
@@ -13,7 +13,6 @@ import {
 import { useAssistantStore } from '../../store/useAssistantStore';
 import { useElderlyMode } from '../../theme/ElderlyModeContext';
 import { useVoiceEngine } from '../../hooks/useVoiceEngine';
-import { voiceService } from '../../utils/voiceService';
 import { colors } from '../../theme/colors';
 import FullPanelChat from './FullPanelChat';
 import FloatingMiniChat from './FloatingMiniChat';
@@ -24,11 +23,6 @@ export default function VoiceAssistantOrchestrator() {
   const { isElderlyMode } = useElderlyMode();
 
   const voiceEngine = useVoiceEngine();
-
-  // 初始化 - 请求权限
-  useEffect(() => {
-    voiceService.requestPermissions();
-  }, []);
 
   const fabSize = isElderlyMode ? 68 : 56;
 
