@@ -13,6 +13,74 @@ export interface ItineraryItemMeta {
   durationMinutes: number;
 }
 
+export type SavedTripItemSource = 'manual' | 'ai_supplement' | 'ai_generated';
+export type SavedTripSource = 'manual' | 'ai' | 'ai_supplement';
+
+export interface SavedTripItem {
+  id: string;
+  category: 'attraction' | 'hotel' | 'restaurant' | 'experience';
+  name: string;
+  address: string;
+  latitude: number | null;
+  longitude: number | null;
+  startTime: string;
+  endTime: string;
+  duration: number;
+  price: number;
+  source: SavedTripItemSource;
+  order: number;
+  dayNumber: number;
+}
+
+export interface SavedTripDay {
+  id: string;
+  tripId: string;
+  dayNumber: number;
+  date: string;
+  title: string;
+  items: SavedTripItem[];
+}
+
+export interface SavedTrip {
+  id: string;
+  city: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+  travelers: string;
+  budget: number;
+  pace: string;
+  source: SavedTripSource;
+  createdAt: string;
+  dayPlans: SavedTripDay[];
+}
+
+export interface CreateTripFromAIPayload {
+  city: string;
+  title: string;
+  startDate: string;
+  days: number;
+  travelers: string;
+  budget: number;
+  pace: string;
+  source: SavedTripSource;
+  items: Array<{
+    id: string;
+    category: SavedTripItem['category'];
+    name: string;
+    address: string;
+    latitude: number;
+    longitude: number;
+    price: number;
+    durationMinutes: number;
+    startTime: string;
+    endTime: string;
+    source: SavedTripItemSource;
+  }>;
+  replaceExisting?: boolean;
+}
+
 // 按地点类型的默认游玩时长（分钟）；盲盒地点稍短一些。
 export function defaultDurationForPlace(place: TravelPlace): number {
   if (place.tags.includes('旅行盲盒')) return 90;
@@ -30,6 +98,8 @@ interface LiveTravelState {
   error: string | null;
   itinerary: TravelPlace[];
   itemMeta: Record<string, ItineraryItemMeta>;
+  currentTrip: SavedTrip | null;
+  tripDays: SavedTripDay[];
   search: (category: TravelPlaceCategory, keyword?: string, append?: boolean) => Promise<void>;
   getPlace: (placeId: string) => TravelPlace | undefined;
   addToItinerary: (place: TravelPlace, meta?: Partial<ItineraryItemMeta>) => void;
@@ -37,6 +107,7 @@ interface LiveTravelState {
   moveItineraryItem: (placeId: string, direction: -1 | 1) => void;
   setPlaceDay: (placeId: string, day: number) => void;
   setPlaceDuration: (placeId: string, durationMinutes: number) => void;
+  createTripFromAI: (payload: CreateTripFromAIPayload) => SavedTrip;
   clearError: () => void;
 }
 
@@ -49,6 +120,8 @@ export const useLiveTravelStore = create<LiveTravelState>((set, get) => ({
   error: null,
   itinerary: [],
   itemMeta: {},
+  currentTrip: null,
+  tripDays: [],
 
   search: async (category, keyword = '', append = false) => {
     if (get().loading) return;
@@ -128,5 +201,90 @@ export const useLiveTravelStore = create<LiveTravelState>((set, get) => ({
     return { itemMeta: { ...state.itemMeta, [placeId]: { ...current, durationMinutes } } };
   }),
 
+  createTripFromAI: payload => {
+    const state = get();
+    if (!Number.isInteger(payload.days) || ![3, 4, 5, 7].includes(payload.days)) {
+      throw new Error('行程天数必须是3、4、5或7天');
+    }
+    if ((state.itinerary.length > 0 || state.currentTrip) && !payload.replaceExisting) {
+      throw new Error(state.currentTrip ? '已有当前行程，请确认后再覆盖创建' : '已有手动行程，请先处理后再创建AI行程');
+    }
+    if (payload.items.some(item => !item.id || !item.name || !item.address || !Number.isFinite(item.latitude) || !Number.isFinite(item.longitude))) {
+      throw new Error('行程地点缺少有效坐标或地址');
+    }
+
+    const tripId = `trip-ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const endDate = addDaysISO(payload.startDate, payload.days - 1);
+    const dayPlans: SavedTripDay[] = Array.from({ length: payload.days }, (_, index) => {
+      const dayNumber = index + 1;
+      const dayItems = payload.items
+        .filter((_, itemIndex) => itemIndex % payload.days === index)
+        .map((item, itemIndex) => ({
+          ...item,
+          id: `${item.id}-${tripId}-${dayNumber}-${itemIndex}`,
+          duration: item.durationMinutes,
+          order: itemIndex + 1,
+          dayNumber,
+        }));
+      return {
+        id: `${tripId}-day-${dayNumber}`,
+        tripId,
+        dayNumber,
+        date: addDaysISO(payload.startDate, index),
+        title: dayItems.length ? `北京探索 · 第${dayNumber}天` : '自由安排 / 休息',
+        items: dayItems,
+      };
+    });
+    const newTrip: SavedTrip = {
+      id: tripId,
+      city: payload.city,
+      title: payload.title,
+      startDate: payload.startDate,
+      endDate,
+      days: payload.days,
+      travelers: payload.travelers,
+      budget: payload.budget,
+      pace: payload.pace,
+      source: payload.source,
+      createdAt: new Date().toISOString(),
+      dayPlans,
+    };
+    const newItinerary = dayPlans.flatMap(day => day.items.map(item => toTravelPlace(item)));
+    const newItemMeta = Object.fromEntries(dayPlans.flatMap(day => day.items.map(item => [item.id, { day: day.dayNumber, durationMinutes: item.duration }]))) as Record<string, ItineraryItemMeta>;
+
+    // 所有数据先在内存中构建并校验，最后只进行一次状态更新，避免留下半条行程。
+    set({ currentTrip: newTrip, tripDays: dayPlans, itinerary: newItinerary, itemMeta: newItemMeta });
+    return newTrip;
+  },
+
   clearError: () => set({ error: null }),
 }));
+
+function addDaysISO(dateStr: string, days: number): string {
+  const date = new Date(`${dateStr}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function toTravelPlace(item: SavedTripItem): TravelPlace {
+  return {
+    id: item.id,
+    source: 'amap',
+    category: item.category === 'restaurant' ? 'restaurant' : item.category === 'hotel' ? 'hotel' : 'attraction',
+    city: '北京',
+    name: item.name,
+    address: item.address,
+    district: '北京',
+    location: { latitude: item.latitude as number, longitude: item.longitude as number },
+    typeName: item.category,
+    typeCode: item.category,
+    rating: null,
+    cost: item.price,
+    phone: '',
+    openHours: `${item.startTime}-${item.endTime}`,
+    businessArea: '北京',
+    tags: ['AI行程'],
+    photoUrls: [],
+    booking: { enabled: false, provider: item.category === 'restaurant' ? 'meituan' : 'ctrip', label: '', url: null },
+  };
+}
