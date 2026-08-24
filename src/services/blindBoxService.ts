@@ -1,6 +1,6 @@
 import { apiRequest } from './apiClient';
 import type { TravelPlace } from '../types/travel';
-import type { BlindBoxControls, BlindBoxResult, BlindBoxTripProfile } from '../types/blindBox';
+import type { BlindBoxControls, BlindBoxGenerationContext, BlindBoxResult, BlindBoxTripProfile } from '../types/blindBox';
 
 function itineraryType(place: TravelPlace): string {
   if (place.category === 'restaurant') return 'food';
@@ -13,9 +13,22 @@ export function generateBlindBox(
   controls: BlindBoxControls,
   itinerary: TravelPlace[],
   excludeCandidateIds: string[] = [],
+  context?: BlindBoxGenerationContext,
 ): Promise<BlindBoxResult> {
   const effectiveLimit = Math.min(profile.totalTripBudget, controls.budgetTotal);
   const payload = {
+    trip_id: context?.tripId,
+    city: profile.destination,
+    selected_day_id: context?.selectedDayId,
+    visit_date: context?.visitDate,
+    time_slot: controls.timeSlot,
+    previous_stop: context?.previousStop,
+    next_stop: context?.nextStop,
+    mode: controls.type,
+    budget_total: controls.budgetTotal,
+    max_detour_minutes: controls.maxDetourMinutes,
+    reveal_now: controls.revealImmediately,
+    candidate_places: context?.candidatePlaces ?? [],
     trip_profile: {
       destination: profile.destination,
       preferences: profile.preferences,
@@ -40,6 +53,11 @@ export function generateBlindBox(
       reveal_now: controls.revealImmediately,
       request_id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       exclude_candidate_ids: excludeCandidateIds,
+      trip_id: context?.tripId,
+      selected_day_id: context?.selectedDayId,
+      visit_date: context?.visitDate,
+      previous_stop: context?.previousStop,
+      next_stop: context?.nextStop,
     },
     day_itinerary: itinerary.map(place => ({
       item_id: place.id,

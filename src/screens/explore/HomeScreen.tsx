@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import type { NavigationProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { usePreferenceStore } from '../../store/usePreferenceStore';
-import type { ExploreStackParamList } from '../../types';
+import type { ExploreStackParamList, UserTabParamList } from '../../types';
 import {
   AUTO_PLAN_VARIANTS,
   BEIJING_CANDIDATES,
@@ -16,7 +17,9 @@ import {
   PlannerMode,
   PlannerParams,
   QUICK_SERVICES,
+  MOCK_TRIP_START_DATE,
 } from '../../data/beijingHomeMock';
+import { useLiveTravelStore } from '../../store/useLiveTravelStore';
 import CurrentTripCard from '../../components/home/CurrentTripCard';
 import ItineraryPreviewSheet from '../../components/home/ItineraryPreviewSheet';
 import PlannerCandidatePanel from '../../components/home/PlannerCandidatePanel';
@@ -32,6 +35,7 @@ const HERO_IMAGE = 'https://images.unsplash.com/photo-1508804185872-d7badad00f7d
 
 export default function HomeScreen() {
   const navigation = useNavigation<Navigation>();
+  const tabNavigation = navigation.getParent<NavigationProp<UserTabParamList>>();
   const insets = useSafeAreaInsets();
   const elderlyMode = usePreferenceStore(state => state.elderlyMode);
   const setElderlyMode = usePreferenceStore(state => state.setElderlyMode);
@@ -85,7 +89,7 @@ export default function HomeScreen() {
   };
   const handleSuggestion = (candidate: PlannerCandidate, action: 'accept' | 'replace' | 'ignore') => {
     if (action === 'accept') { setSelectedIds(ids => ids.includes(candidate.id) ? ids : [...ids, candidate.id]); return; }
-    if (action === 'ignore') { setIgnoredIds(ids => ids.includes(candidate.id) ? ids : [...ids, candidate.id]); return; }
+    if (action === 'ignore') { setIgnoredIds(ids => ids.includes(candidate.id) ? ids : [...ids, candidate.id]); setSelectedIds(ids => ids.filter(id => id !== candidate.id)); return; }
     const replacement = BEIJING_CANDIDATES.find(item => item.category === candidate.category && item.id !== candidate.id && !selectedIds.includes(item.id) && !suggestedIds.includes(item.id));
     if (replacement) setSuggestedIds(ids => ids.map(id => id === candidate.id ? replacement.id : id));
   };
@@ -115,6 +119,38 @@ export default function HomeScreen() {
     }
     setPlanning(true);
     planningTimer.current = setTimeout(() => { setPlanning(false); setPreviewVisible(true); }, 1600);
+  };
+  const createAndViewTrip = async () => {
+    const create = (replaceExisting = false) => {
+      const store = useLiveTravelStore.getState();
+      const days = Number.parseInt(params.days, 10);
+      const budget = Number.parseInt(params.budget.replace(/[^0-9]/g, ''), 10) || 0;
+      const items = activeCandidates.map(candidate => {
+        if (candidate.latitude === undefined || candidate.longitude === undefined || !candidate.address) throw new Error(`地点“${candidate.name}”缺少演示坐标`);
+        return {
+          id: candidate.id,
+          category: candidate.category === 'food' ? 'restaurant' as const : candidate.category,
+          name: candidate.name,
+          address: candidate.address,
+          latitude: candidate.latitude,
+          longitude: candidate.longitude,
+          price: candidate.price ?? 0,
+          durationMinutes: candidate.durationMinutes ?? 60,
+          startTime: candidate.startTime ?? '09:00',
+          endTime: candidate.endTime ?? '10:00',
+          source: mode === 'self' ? 'manual' as const : mode === 'complete' && selectedIds.includes(candidate.id) ? 'manual' as const : mode === 'complete' ? 'ai_supplement' as const : 'ai_generated' as const,
+        };
+      });
+      store.createTripFromAI({ city: '北京', title: `北京 · ${days}天${days - 1}晚`, startDate: MOCK_TRIP_START_DATE, days, travelers: params.people, budget, pace: params.pace, source: mode === 'self' ? 'manual' : mode === 'complete' ? 'ai_supplement' : 'ai', items, replaceExisting });
+      setPreviewVisible(false);
+      tabNavigation?.navigate('行程', { screen: 'LiveItinerary' });
+    };
+    const existing = useLiveTravelStore.getState();
+    if ((existing.currentTrip || existing.itinerary.length > 0)) {
+      await new Promise<void>(resolve => Alert.alert('已有行程', '当前创建会替换已有行程，是否继续？', [{ text: '取消', style: 'cancel', onPress: () => resolve() }, { text: '覆盖并创建', style: 'destructive', onPress: () => { try { create(true); } finally { resolve(); } } }]));
+      return;
+    }
+    create();
   };
   const navigateToNearby = () => navigation.navigate('LivePlaces', { category: 'attraction' });
 
@@ -148,7 +184,7 @@ export default function HomeScreen() {
       </View>
     </Animated.ScrollView>
     <PlannerParameterPicker field={picker} value={params} onClose={() => setPicker(null)} onChange={updateParam} />
-    <ItineraryPreviewSheet visible={previewVisible} days={params.days} selectedCandidates={activeCandidates} modeLabel={PLANNER_MODE_COPY[mode].label} onClose={() => setPreviewVisible(false)} onViewFull={() => { setPreviewVisible(false); navigation.navigate('LiveItinerary'); }} />
+    <ItineraryPreviewSheet visible={previewVisible} days={params.days} selectedCandidates={activeCandidates} modeLabel={PLANNER_MODE_COPY[mode].label} onClose={() => setPreviewVisible(false)} onCreate={createAndViewTrip} />
     <Modal visible={showPreferencePrompt} transparent animationType="fade"><View style={styles.promptOverlay}><View style={styles.promptCard}><Ionicons name="sparkles" size={28} color={C.teal} /><Text style={styles.promptTitle}>先设置一次旅行偏好？</Text><Text style={styles.promptText}>设置完成后，AI 会更懂你的北京旅行节奏。</Text><Pressable style={styles.promptButton} onPress={() => navigation.navigate('Preference')}><Text style={styles.promptButtonText}>去设置</Text></Pressable><Pressable onPress={dismissPreferencePrompt} style={styles.later}><Text style={styles.laterText}>稍后再说</Text></Pressable></View></View></Modal>
   </SafeAreaView>;
 }

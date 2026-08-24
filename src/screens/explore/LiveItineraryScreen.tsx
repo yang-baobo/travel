@@ -82,6 +82,7 @@ export default function LiveItineraryScreen() {
   const navigation = useNavigation<Navigation>();
   const itinerary = useLiveTravelStore(state => state.itinerary);
   const itemMeta = useLiveTravelStore(state => state.itemMeta);
+  const currentTrip = useLiveTravelStore(state => state.currentTrip);
   const remove = useLiveTravelStore(state => state.removeFromItinerary);
   const move = useLiveTravelStore(state => state.moveItineraryItem);
   const setPlaceDay = useLiveTravelStore(state => state.setPlaceDay);
@@ -94,12 +95,16 @@ export default function LiveItineraryScreen() {
   const [loading, setLoading] = useState(false);
   const [showTripSetup, setShowTripSetup] = useState(false);
   const [durationEditId, setDurationEditId] = useState<string | null>(null);
+  const [selectedDay, setSelectedDay] = useState(1);
 
-  const travelDays = Math.max(1, dateRangeDays(preference.travelStartDate, preference.travelReturnDate));
+  const activeStartDate = currentTrip?.startDate ?? preference.travelStartDate;
+  const travelDays = currentTrip?.days ?? Math.max(1, dateRangeDays(preference.travelStartDate, preference.travelReturnDate));
   const travelDates = useMemo(
-    () => Array.from({ length: travelDays }, (_, i) => addDaysISO(preference.travelStartDate, i)),
-    [preference.travelStartDate, travelDays],
+    () => Array.from({ length: travelDays }, (_, i) => addDaysISO(activeStartDate, i)),
+    [activeStartDate, travelDays],
   );
+
+  useEffect(() => { if (selectedDay > travelDays) setSelectedDay(travelDays); }, [selectedDay, travelDays]);
 
   const tripContext = useMemo<TripHotelContext>(() => ({
     destination: preference.selectedCity,
@@ -179,7 +184,7 @@ export default function LiveItineraryScreen() {
   useEffect(() => {
     let active = true;
     const pairs: Array<{ key: string; from: TravelRouteEndpoint; to: TravelRouteEndpoint }> = [];
-    dayPlans.forEach(plan => {
+    dayPlans.filter(plan => plan.day === selectedDay).forEach(plan => {
       plan.nodes.slice(0, -1).forEach((node, index) => {
         const next = plan.nodes[index + 1];
         pairs.push({ key: `${plan.day}-${index}`, from: node.endpoint, to: next.endpoint });
@@ -212,7 +217,7 @@ export default function LiveItineraryScreen() {
       setLoading(false);
     });
     return () => { active = false; };
-  }, [preference.transportPref, preference.transportRule.defaultMode, signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [preference.transportPref, preference.transportRule.defaultMode, signature, selectedDay]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 计算每天时间轴：每个地点的到达/离开时间
   const daySchedules = useMemo(() => {
@@ -293,7 +298,7 @@ export default function LiveItineraryScreen() {
             {travelDates.map((date, index) => {
               const count = dayAssignCounts[index + 1] || 0;
               return (
-                <View key={date} style={[styles.dayChip, count > 0 && styles.dayChipActive]}>
+                <TouchableOpacity key={date} onPress={() => setSelectedDay(index + 1)} style={[styles.dayChip, count > 0 && styles.dayChipActive, selectedDay === index + 1 && styles.dayChipSelected]}>
                   <Text style={[styles.dayChipDay, count > 0 && styles.dayChipDayActive]}>第{index + 1}天</Text>
                   <Text style={[styles.dayChipDate, count > 0 && styles.dayChipDateActive]}>
                     {formatDayDate(date)}
@@ -301,7 +306,7 @@ export default function LiveItineraryScreen() {
                   <Text style={[styles.dayChipCount, count > 0 && styles.dayChipCountActive]}>
                     {count > 0 ? `${count}个地点` : '自由安排'}
                   </Text>
-                </View>
+                </TouchableOpacity>
               );
             })}
           </ScrollView>
@@ -333,7 +338,7 @@ export default function LiveItineraryScreen() {
           </View>
         )}
 
-        {daySchedules.map(({ plan, entries, dayEndMinute }) => {
+        {daySchedules.filter(({ plan }) => plan.day === selectedDay).map(({ plan, entries, dayEndMinute }) => {
           const endLimit = timeToMinutes(preference.dailyEndTime || '19:00');
           const overflow = plan.places.length > 0 && dayEndMinute > endLimit;
           return (
@@ -363,11 +368,15 @@ export default function LiveItineraryScreen() {
                   <Text style={styles.freeDayText}>这一天暂无安排，可从地点列表加入，或留给旅行盲盒</Text>
                 </View>
               )}
+              {plan.places.length === 1 && (
+                <View style={styles.routeHint}><Ionicons name="information-circle-outline" size={16} color={colors.warningYellow} /><Text style={styles.routeHintText}>当天只有一个地点，至少再添加一个地点后才能计算路线。</Text></View>
+              )}
 
               {entries.map((entry, index) => {
                 const { node } = entry;
                 const nextEntry = entries[index + 1];
                 const segmentKey = `${plan.day}-${index}`;
+                const savedItem = node.place ? currentTrip?.dayPlans.flatMap(day => day.items).find(item => item.id === node.place?.id) : undefined;
                 return (
                   <View key={node.key}>
                     {node.isHotelAnchor ? (
@@ -396,6 +405,7 @@ export default function LiveItineraryScreen() {
                         onSetDay={setPlaceDay}
                         onMove={move}
                         onRemove={remove}
+                        sourceLabel={savedItem?.source}
                       />
                     ) : null}
 
@@ -477,7 +487,7 @@ export default function LiveItineraryScreen() {
   );
 }
 
-function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays, isFirstInDay, isLastInDay, onEditDuration, onSetDay, onMove, onRemove }: {
+function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays, isFirstInDay, isLastInDay, onEditDuration, onSetDay, onMove, onRemove, sourceLabel }: {
   place: TravelPlace;
   entry: DaySchedulePlace;
   orderNumber: number;
@@ -490,6 +500,7 @@ function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays
   onSetDay: (placeId: string, day: number) => void;
   onMove: (placeId: string, direction: -1 | 1) => void;
   onRemove: (placeId: string) => void;
+  sourceLabel?: 'manual' | 'ai_supplement' | 'ai_generated' | 'blind_box_preference' | 'blind_box_detour';
 }) {
   const isBlindBox = place.tags.includes('旅行盲盒');
   return (
@@ -505,6 +516,7 @@ function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays
         <Text style={styles.stopMeta}>
           {CATEGORY_LABEL[place.category]} · {place.district || '北京'}
         </Text>
+        {sourceLabel && <Text style={styles.sourceLabel}>{sourceLabel === 'manual' ? '手动选择' : sourceLabel === 'ai_supplement' ? 'AI补全' : sourceLabel === 'ai_generated' ? 'AI生成' : '旅行盲盒'}</Text>}
         <TouchableOpacity style={styles.timeRow} onPress={onEditDuration}>
           <Ionicons name="time-outline" size={14} color={colors.primary} />
           <Text style={styles.timeText}>
@@ -671,7 +683,7 @@ const styles = StyleSheet.create({
   tripSetupBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: colors.surface, borderRadius: borderRadius.full, paddingHorizontal: spacing.md, paddingVertical: 6 },
   tripSetupBtnText: { color: colors.primary, fontSize: 12, fontWeight: '700' },
   dayChip: { minWidth: 92, marginRight: spacing.sm, borderRadius: borderRadius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
-  dayChipActive: { borderColor: colors.primary, backgroundColor: colors.surface },
+  dayChipActive: { borderColor: colors.primary, backgroundColor: colors.surface }, dayChipSelected: { borderWidth: 2, backgroundColor: '#E6F7F3' },
   dayChipDay: { color: colors.textSecondary, fontSize: 11, fontWeight: '700' },
   dayChipDayActive: { color: colors.primary },
   dayChipDate: { color: colors.textPrimary, fontSize: 12, fontWeight: '800', marginTop: 2 },
@@ -690,7 +702,7 @@ const styles = StyleSheet.create({
   overflowNote: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FFF7ED', borderRadius: borderRadius.sm, padding: spacing.sm, marginBottom: spacing.sm },
   overflowText: { flex: 1, color: '#9A3412', fontSize: 11, lineHeight: 16 },
   freeDayCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: borderRadius.md, padding: spacing.md, backgroundColor: colors.surface },
-  freeDayText: { flex: 1, color: colors.textSecondary, fontSize: 11, lineHeight: 17 },
+  freeDayText: { flex: 1, color: colors.textSecondary, fontSize: 11, lineHeight: 17 }, routeHint: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderRadius: borderRadius.md, padding: spacing.sm, backgroundColor: '#FFF8E7' }, routeHintText: { flex: 1, color: '#8A6418', fontSize: 11, lineHeight: 17 },
   stopCard: { minHeight: 88, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: borderRadius.lg, padding: spacing.md, ...shadow.light },
   order: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
   orderText: { color: '#FFF', fontWeight: '800' },
@@ -699,7 +711,7 @@ const styles = StyleSheet.create({
   stopName: { color: colors.textPrimary, fontSize: 15, fontWeight: '700', flex: 1 },
   blindBadge: { backgroundColor: '#EDE9FE', borderRadius: 99, paddingHorizontal: 7, paddingVertical: 2 },
   blindBadgeText: { color: '#6D28D9', fontSize: 10, fontWeight: '800' },
-  stopMeta: { marginTop: 3, color: colors.textSecondary, fontSize: 11 },
+  stopMeta: { marginTop: 3, color: colors.textSecondary, fontSize: 11 }, sourceLabel: { marginTop: 3, color: colors.primary, fontSize: 10, fontWeight: '700' },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, backgroundColor: colors.background, borderRadius: borderRadius.sm, paddingHorizontal: spacing.sm, paddingVertical: 5, alignSelf: 'flex-start' },
   timeText: { color: colors.primary, fontSize: 11, fontWeight: '700' },
   dayControlRow: { flexDirection: 'row', gap: 6, marginTop: 6 },

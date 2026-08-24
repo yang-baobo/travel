@@ -31,6 +31,15 @@ export interface BlindBoxControls {
   revealImmediately: boolean;
 }
 
+export interface BlindBoxGenerationContext {
+  tripId: string;
+  selectedDayId: string;
+  visitDate: string;
+  previousStop: { id: string; name: string; lat: number; lng: number } | null;
+  nextStop: { id: string; name: string; lat: number; lng: number } | null;
+  candidatePlaces: Array<{ item_id: string; type: string; name: string; lat: number; lng: number }>;
+}
+
 export interface BlindBoxCandidate {
   id: string;
   name: string;
@@ -87,6 +96,8 @@ export interface BlindBoxSuccessResult {
     constraint_audit: Record<string, string>;
   };
 }
+
+export type BlindBoxInsertedSource = 'blind_box_preference' | 'blind_box_detour';
 
 export interface BlindBoxNoOptionResult {
   status: 'no_feasible_option';

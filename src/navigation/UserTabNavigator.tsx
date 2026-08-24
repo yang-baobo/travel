@@ -6,8 +6,9 @@ import ExploreStack from './ExploreStack';
 import CustomStack from './CustomStack';
 import OrderStack from './OrderStack';
 import ProfileStack from './ProfileStack';
+import type { UserTabParamList } from '../types';
 
-const Tab = createBottomTabNavigator();
+const Tab = createBottomTabNavigator<UserTabParamList>();
 
 export default function UserTabNavigator() {
   return (

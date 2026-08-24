@@ -435,10 +435,12 @@ export type AuthStackParamList = {
 };
 
 // 探索 Tab
+import type { NavigatorScreenParams } from '@react-navigation/native';
+
 export type ExploreStackParamList = {
   Home: undefined;
   TripProfile: undefined;
-  BlindBox: undefined;
+  BlindBox: { dayNumber?: number } | undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
   LivePlaceDetail: { placeId: string };
   LiveItinerary: undefined;
@@ -462,7 +464,7 @@ export type ExploreStackParamList = {
 export type CustomStackParamList = {
   CustomHome: undefined;
   TripProfile: undefined;
-  BlindBox: undefined;
+  BlindBox: { dayNumber?: number } | undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
   LivePlaceDetail: { placeId: string };
   LiveItinerary: undefined;
@@ -490,6 +492,13 @@ export type ProfileStackParamList = {
   TripProfile: undefined;
   Preference: undefined;
   Favorites: undefined;
+};
+
+export type UserTabParamList = {
+  '探索': NavigatorScreenParams<ExploreStackParamList>;
+  '行程': NavigatorScreenParams<CustomStackParamList>;
+  '订单': NavigatorScreenParams<OrderStackParamList>;
+  '个人': NavigatorScreenParams<ProfileStackParamList>;
 };
 
 // ==================== Store 相关 ====================
