@@ -500,7 +500,7 @@ function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays
   onSetDay: (placeId: string, day: number) => void;
   onMove: (placeId: string, direction: -1 | 1) => void;
   onRemove: (placeId: string) => void;
-  sourceLabel?: 'manual' | 'ai_supplement' | 'ai_generated';
+  sourceLabel?: 'manual' | 'ai_supplement' | 'ai_generated' | 'blind_box_preference' | 'blind_box_detour';
 }) {
   const isBlindBox = place.tags.includes('旅行盲盒');
   return (
@@ -516,7 +516,7 @@ function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays
         <Text style={styles.stopMeta}>
           {CATEGORY_LABEL[place.category]} · {place.district || '北京'}
         </Text>
-        {sourceLabel && <Text style={styles.sourceLabel}>{sourceLabel === 'manual' ? '手动选择' : sourceLabel === 'ai_supplement' ? 'AI补全' : 'AI生成'}</Text>}
+        {sourceLabel && <Text style={styles.sourceLabel}>{sourceLabel === 'manual' ? '手动选择' : sourceLabel === 'ai_supplement' ? 'AI补全' : sourceLabel === 'ai_generated' ? 'AI生成' : '旅行盲盒'}</Text>}
         <TouchableOpacity style={styles.timeRow} onPress={onEditDuration}>
           <Ionicons name="time-outline" size={14} color={colors.primary} />
           <Text style={styles.timeText}>

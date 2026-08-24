@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useRoute } from '@react-navigation/native';
 import { colors } from '../../theme/colors';
 import { borderRadius, shadow, spacing } from '../../theme/spacing';
 import { generateBlindBox } from '../../services/blindBoxService';
@@ -31,6 +32,34 @@ const DEFAULT_CONTROLS: BlindBoxControls = {
   revealImmediately: false,
 };
 
+type DayItemLike = { id: string; name: string; latitude: number | null; longitude: number | null; startTime: string; endTime: string };
+function toMinutes(value: string): number { const [hour, minute] = value.split(':').map(Number); return Number.isFinite(hour) && Number.isFinite(minute) ? hour * 60 + minute : -1; }
+function formatDate(date: string): string { const value = new Date(`${date}T12:00:00`); return `${value.getMonth() + 1}月${value.getDate()}日`; }
+function getSlotContext(items: DayItemLike[], start: string, end: string) {
+  const startMin = toMinutes(start); const endMin = toMinutes(end);
+  const sorted = [...items].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
+  return { previous: [...sorted].reverse().find(item => toMinutes(item.endTime) <= startMin) ?? null, next: sorted.find(item => toMinutes(item.startTime) >= endMin) ?? null, conflict: sorted.find(item => startMin < toMinutes(item.endTime) && endMin > toMinutes(item.startTime)) ?? null };
+}
+function findRecommendedSlotOld(items: DayItemLike[]): { start: string; end: string } | null {
+  const sorted = [...items].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
+  const windows = [{ start: 9 * 60, end: 19 * 60 }, ...sorted.map((item, index) => ({ start: toMinutes(item.endTime) + 10, end: toMinutes(sorted[index + 1]?.startTime ?? '19:00') - 10 }))];
+  const slot = windows.find(window => window.end - window.start >= 90);
+  return slot ? { start: `${String(Math.floor(slot.start / 60)).padStart(2, '0')}:${String(slot.start % 60).padStart(2, '0')}`, end: `${String(Math.floor((slot.start + 120) / 60)).padStart(2, '0')}:${String((slot.start + 120) % 60).padStart(2, '0')}` } : null;
+}
+
+function findRecommendedSlot(items: DayItemLike[]): { start: string; end: string } | null {
+  const sorted = [...items].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
+  let cursor = 9 * 60;
+  for (const item of sorted) {
+    const start = toMinutes(item.startTime);
+    if (start - cursor >= 90) return clockSlot(cursor, cursor + 120);
+    cursor = Math.max(cursor, toMinutes(item.endTime) + 10);
+  }
+  return 19 * 60 - cursor >= 90 ? clockSlot(cursor, cursor + 120) : null;
+}
+
+function clockSlot(start: number, end: number): { start: string; end: string } { return { start: `${String(Math.floor(start / 60)).padStart(2, '0')}:${String(start % 60).padStart(2, '0')}`, end: `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}` }; }
+
 export default function BlindBoxScreen() {
   const navigation = useNavigation<any>();
   const setupStatus = useBlindBoxStore(state => state.setupStatus);
@@ -41,6 +70,9 @@ export default function BlindBoxScreen() {
   const setResult = useBlindBoxStore(state => state.setResult);
   const reveal = useBlindBoxStore(state => state.reveal);
   const itinerary = useLiveTravelStore(state => state.itinerary);
+  const currentTrip = useLiveTravelStore(state => state.currentTrip);
+  const tripDays = useLiveTravelStore(state => state.tripDays);
+  const insertBlindBoxIntoDay = useLiveTravelStore(state => state.insertBlindBoxIntoDay);
   const addToItinerary = useLiveTravelStore(state => state.addToItinerary);
   const selectedCategories = usePreferenceStore(state => state.selectedCategories);
   const cuisinePrefs = usePreferenceStore(state => state.cuisinePrefs);
@@ -68,11 +100,30 @@ export default function BlindBoxScreen() {
 
   const [controls, setControls] = useState(DEFAULT_CONTROLS);
   const [loading, setLoading] = useState(false);
-  const routeSummary = useMemo(() => (
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const route = useRoute<any>();
+  const [selectedDayNumber, setSelectedDayNumber] = useState<number>(route.params?.dayNumber ?? 1);
+  const selectedDay = tripDays.find(day => day.dayNumber === selectedDayNumber) ?? tripDays[0];
+  const dayItems = selectedDay?.items ?? [];
+  const recommendedSlot = useMemo(() => findRecommendedSlot(dayItems), [dayItems]);
+  const slotContext = useMemo(() => getSlotContext(dayItems, controls.timeSlot.start, controls.timeSlot.end), [dayItems, controls.timeSlot]);
+  const selectedDayPlaces = useMemo(() => itinerary.filter(place => dayItems.some(item => item.id === place.id)), [dayItems, itinerary]);
+  const routeSummaryOld = useMemo(() => (
     itinerary.length >= 2 ? `${itinerary.length} 个地点，偏航会自动寻找最顺路的插入位置` : `${itinerary.length} 个地点`
   ), [itinerary.length]);
+  const routeSummary = `${dayItems.length} 个地点 · ${slotContext.previous?.name ?? '当天起点'} → ${slotContext.next?.name ?? '当天结束'}`;
 
   const confirmDefaultProfile = useBlindBoxStore(state => state.confirmProfile);
+
+  useEffect(() => {
+    if (tripDays.length > 0 && !tripDays.some(day => day.dayNumber === selectedDayNumber)) setSelectedDayNumber(tripDays[0].dayNumber);
+  }, [selectedDayNumber, tripDays]);
+  useEffect(() => {
+    if (recommendedSlot && controls.timeSlot.start === DEFAULT_CONTROLS.timeSlot.start && controls.timeSlot.end === DEFAULT_CONTROLS.timeSlot.end) setControls(state => ({ ...state, timeSlot: recommendedSlot }));
+  }, [controls.timeSlot.end, controls.timeSlot.start, recommendedSlot]);
+  useEffect(() => {
+    if (recommendedSlot) setControls(state => ({ ...state, timeSlot: recommendedSlot }));
+  }, [selectedDayNumber]);
 
   if (!profile) {
     return (
@@ -91,7 +142,11 @@ export default function BlindBoxScreen() {
     );
   }
 
-  const runGeneration = async (replace = false) => {
+  if (!currentTrip || tripDays.length === 0) {
+    return <View style={styles.setupEmpty}><View style={styles.lockIcon}><Ionicons name="map-outline" size={44} color={colors.primary} /></View><Text style={styles.emptyTitle}>请先创建一条行程，再使用时间段盲盒。</Text><Text style={styles.emptyText}>盲盒需要读取具体日期、当天地点和可插入空档。</Text><TouchableOpacity style={styles.primaryButton} onPress={() => navigation.navigate('LiveItinerary')}><Text style={styles.primaryButtonText}>去创建行程</Text></TouchableOpacity></View>;
+  }
+
+  const runGenerationOld = async (replace = false) => {
     if (!/^\d{2}:\d{2}$/.test(controls.timeSlot.start) || !/^\d{2}:\d{2}$/.test(controls.timeSlot.end)) {
       Alert.alert('时间格式不正确', '请按照 15:00 这样的格式填写。');
       return;
@@ -117,7 +172,31 @@ export default function BlindBoxScreen() {
     }
   };
 
-  const addSelected = () => {
+  const runGeneration = async (replace = false) => {
+    if (loading || !currentTrip || !selectedDay) return;
+    const start = toMinutes(controls.timeSlot.start); const end = toMinutes(controls.timeSlot.end);
+    if (start < 0 || end < 0 || start >= end) { setGenerationError('时间段无效：开始时间必须早于结束时间。'); return; }
+    if (end - start < 90) { setGenerationError('时间段至少需要90分钟，才能预留交通、体验和缓冲。'); return; }
+    if (slotContext.conflict) { setGenerationError(`时间冲突：${slotContext.conflict.name} 已占用 ${slotContext.conflict.startTime}-${slotContext.conflict.endTime}。`); return; }
+    if (profile.hardConstraints.noNightActivity && end > 19 * 60) { setGenerationError('当前旅行设置不接受夜间活动，盲盒必须在19:00前结束。'); return; }
+    setLoading(true); setGenerationError(null);
+    try {
+      const excluded = replace && result?.status === 'success' ? [result.system_payload.selected_candidate_id] : [];
+      const context = {
+        tripId: currentTrip.id,
+        selectedDayId: selectedDay.id,
+        visitDate: selectedDay.date,
+        previousStop: slotContext.previous && slotContext.previous.latitude !== null && slotContext.previous.longitude !== null ? { id: slotContext.previous.id, name: slotContext.previous.name, lat: slotContext.previous.latitude, lng: slotContext.previous.longitude } : null,
+        nextStop: slotContext.next && slotContext.next.latitude !== null && slotContext.next.longitude !== null ? { id: slotContext.next.id, name: slotContext.next.name, lat: slotContext.next.latitude, lng: slotContext.next.longitude } : null,
+        candidatePlaces: dayItems.filter(item => item.latitude !== null && item.longitude !== null).map(item => ({ item_id: item.id, type: item.category, name: item.name, lat: item.latitude as number, lng: item.longitude as number })),
+      };
+      const next = await generateBlindBox({ ...profile, preferences: platformPreferences }, { ...controls, timeSlot: { start: controls.timeSlot.start, end: controls.timeSlot.end } }, selectedDayPlaces, excluded, context);
+      setResult(next);
+    } catch (error) { setGenerationError(error instanceof Error ? error.message : '盲盒生成失败，请稍后重试。'); }
+    finally { setLoading(false); }
+  };
+
+  const addSelectedOld = () => {
     if (result?.status !== 'success') return;
     const candidatePlace = blindBoxCandidateToTravelPlace(result.system_payload.selected_candidate);
     // 盲盒默认安排到最后一个有安排的行程日，保持整体连贯。
@@ -132,6 +211,21 @@ export default function BlindBoxScreen() {
       { text: '继续浏览', style: 'cancel' },
       { text: '查看行程', onPress: () => navigation.navigate('LiveItinerary') },
     ]);
+  };
+
+  const addSelected = () => {
+    if (result?.status !== 'success' || !currentTrip || !selectedDay) return;
+    const candidate = result.system_payload.selected_candidate;
+    try {
+      insertBlindBoxIntoDay({
+        tripId: currentTrip.id,
+        dayId: selectedDay.id,
+        insertAfterItemId: slotContext.previous?.id ?? null,
+        insertBeforeItemId: slotContext.next?.id ?? null,
+        item: { category: candidate.category === 'food' ? 'restaurant' : candidate.category === 'shopping' || candidate.category === 'rest' ? 'attraction' : candidate.category, name: candidate.name, address: candidate.address, latitude: candidate.lat, longitude: candidate.lng, startTime: controls.timeSlot.start, endTime: controls.timeSlot.end, duration: 90, price: candidate.price ?? 0, source: controls.type === 'preference' ? 'blind_box_preference' : 'blind_box_detour' },
+      });
+      Alert.alert('已插入行程', `已加入 DAY ${selectedDay.dayNumber}，路线将只重新计算当天地点。`, [{ text: '继续浏览', style: 'cancel' }, { text: '查看行程', onPress: () => navigation.navigate('LiveItinerary', { dayNumber: selectedDay.dayNumber }) }]);
+    } catch (error) { setGenerationError(error instanceof Error ? error.message : '插入失败，请重试。'); }
   };
 
   return (
@@ -151,6 +245,12 @@ export default function BlindBoxScreen() {
         <Text style={styles.heroText}>你只需要设置这一次的探索意愿。安全、预算和行动限制由后台自动合并。</Text>
       </View>
 
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>选择插入日期</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dayOptions}>
+          {tripDays.map(day => <TouchableOpacity key={day.id} onPress={() => setSelectedDayNumber(day.dayNumber)} style={[styles.dayOption, selectedDay?.id === day.id && styles.dayOptionActive]}><Text style={styles.dayOptionDay}>DAY {day.dayNumber} · {formatDate(day.date)}</Text><Text style={styles.dayOptionTitle}>{day.title}</Text><Text style={styles.dayOptionMeta}>已安排{day.items.length}项 · {findRecommendedSlot(day.items) ? '存在可插入空档' : '暂无空档'}</Text></TouchableOpacity>)}
+        </ScrollView>
+      </View>
       <View style={styles.card}>
         <Text style={styles.cardTitle}>交给 AI 的时间段</Text>
         <View style={styles.timeRow}>
@@ -224,6 +324,7 @@ export default function BlindBoxScreen() {
         </View>
       </View>
 
+      <View style={styles.slotSummary}><Text style={styles.slotSummaryText}>{recommendedSlot ? `推荐空档：${recommendedSlot.start}—${recommendedSlot.end}` : '当前日期暂未找到90分钟可插入空档'}</Text><Text style={styles.slotSummaryText}>{routeSummary}</Text>{generationError && <><Text style={styles.generationError}>{generationError}</Text><TouchableOpacity onPress={() => void runGeneration(false)}><Text style={styles.generationError}>重新生成</Text></TouchableOpacity></>}</View>
       <TouchableOpacity style={[styles.generateButton, loading && styles.buttonDisabled]} disabled={loading} onPress={() => void runGeneration(false)}>
         {loading ? <ActivityIndicator color="#FFF" /> : <Ionicons name="gift-outline" size={21} color="#FFF" />}
         <Text style={styles.generateText}>{loading ? '正在筛选真实地点和路线…' : '生成旅行盲盒'}</Text>
@@ -387,7 +488,7 @@ const styles = StyleSheet.create({
   heroTitle: { color: '#FFF', fontSize: 22, fontWeight: '900', lineHeight: 30 },
   heroText: { color: 'rgba(255,255,255,0.72)', fontSize: 12, lineHeight: 19, marginTop: spacing.sm },
   card: { backgroundColor: colors.surface, borderRadius: borderRadius.lg, padding: spacing.lg, marginBottom: spacing.md, ...shadow.light },
-  cardTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '800', marginBottom: spacing.md },
+  cardTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '800', marginBottom: spacing.md }, dayOptions: { gap: spacing.sm }, dayOption: { width: 190, padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, backgroundColor: colors.background }, dayOptionActive: { borderColor: colors.primary, backgroundColor: '#EAF1FF' }, dayOptionDay: { color: colors.primaryDark, fontSize: 12, fontWeight: '900' }, dayOptionTitle: { color: colors.textPrimary, fontSize: 12, fontWeight: '700', marginTop: 5 }, dayOptionMeta: { color: colors.textSecondary, fontSize: 10, marginTop: 5 }, slotSummary: { padding: spacing.md, borderRadius: borderRadius.md, backgroundColor: '#F4F7FF', marginTop: spacing.sm }, slotSummaryText: { color: colors.textSecondary, fontSize: 11, lineHeight: 18 }, generationError: { color: colors.priceRed, fontSize: 11, lineHeight: 18, marginTop: 5 },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   timeInput: { flex: 1, height: 48, textAlign: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.md, backgroundColor: colors.background, color: colors.textPrimary, fontSize: 18, fontWeight: '800' },
   timeDash: { color: colors.textSecondary, fontSize: 13 },

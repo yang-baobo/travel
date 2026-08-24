@@ -440,7 +440,7 @@ import type { NavigatorScreenParams } from '@react-navigation/native';
 export type ExploreStackParamList = {
   Home: undefined;
   TripProfile: undefined;
-  BlindBox: undefined;
+  BlindBox: { dayNumber?: number } | undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
   LivePlaceDetail: { placeId: string };
   LiveItinerary: undefined;
@@ -464,7 +464,7 @@ export type ExploreStackParamList = {
 export type CustomStackParamList = {
   CustomHome: undefined;
   TripProfile: undefined;
-  BlindBox: undefined;
+  BlindBox: { dayNumber?: number } | undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
   LivePlaceDetail: { placeId: string };
   LiveItinerary: undefined;

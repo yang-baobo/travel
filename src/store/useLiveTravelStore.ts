@@ -13,7 +13,7 @@ export interface ItineraryItemMeta {
   durationMinutes: number;
 }
 
-export type SavedTripItemSource = 'manual' | 'ai_supplement' | 'ai_generated';
+export type SavedTripItemSource = 'manual' | 'ai_supplement' | 'ai_generated' | 'blind_box_preference' | 'blind_box_detour';
 export type SavedTripSource = 'manual' | 'ai' | 'ai_supplement';
 
 export interface SavedTripItem {
@@ -81,6 +81,14 @@ export interface CreateTripFromAIPayload {
   replaceExisting?: boolean;
 }
 
+export interface BlindBoxInsertPayload {
+  tripId: string;
+  dayId: string;
+  item: Omit<SavedTripItem, 'id' | 'order' | 'dayNumber'> & { id?: string };
+  insertAfterItemId?: string | null;
+  insertBeforeItemId?: string | null;
+}
+
 // 按地点类型的默认游玩时长（分钟）；盲盒地点稍短一些。
 export function defaultDurationForPlace(place: TravelPlace): number {
   if (place.tags.includes('旅行盲盒')) return 90;
@@ -108,6 +116,7 @@ interface LiveTravelState {
   setPlaceDay: (placeId: string, day: number) => void;
   setPlaceDuration: (placeId: string, durationMinutes: number) => void;
   createTripFromAI: (payload: CreateTripFromAIPayload) => SavedTrip;
+  insertBlindBoxIntoDay: (payload: BlindBoxInsertPayload) => SavedTrip;
   clearError: () => void;
 }
 
@@ -255,6 +264,26 @@ export const useLiveTravelStore = create<LiveTravelState>((set, get) => ({
     // 所有数据先在内存中构建并校验，最后只进行一次状态更新，避免留下半条行程。
     set({ currentTrip: newTrip, tripDays: dayPlans, itinerary: newItinerary, itemMeta: newItemMeta });
     return newTrip;
+  },
+
+  insertBlindBoxIntoDay: payload => {
+    const state = get();
+    const trip = state.currentTrip;
+    if (!trip || trip.id !== payload.tripId) throw new Error('当前行程不存在，请先创建行程');
+    const dayIndex = trip.dayPlans.findIndex(day => day.id === payload.dayId);
+    if (dayIndex < 0) throw new Error('选择的行程日期不存在');
+    if (payload.item.id && state.itinerary.some(place => place.id === payload.item.id)) throw new Error('这个盲盒项目已经插入当前行程');
+    const day = trip.dayPlans[dayIndex];
+    if (day.items.some(item => item.name === payload.item.name && item.startTime === payload.item.startTime)) throw new Error('相同时间段已有这个盲盒项目');
+    const itemId = `${payload.item.id ?? 'blind-box'}-${trip.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const newItem: SavedTripItem = { ...payload.item, id: itemId, order: 0, dayNumber: day.dayNumber };
+    const nextItems = [...day.items, newItem].sort((a, b) => a.startTime.localeCompare(b.startTime)).map((item, index) => ({ ...item, order: index + 1 }));
+    const nextDays = trip.dayPlans.map((entry, index) => index === dayIndex ? { ...entry, items: nextItems } : entry);
+    const nextTrip = { ...trip, dayPlans: nextDays };
+    const nextItinerary = nextDays.flatMap(entry => entry.items.map(item => toTravelPlace(item)));
+    const nextMeta = Object.fromEntries(nextDays.flatMap(entry => entry.items.map(item => [item.id, { day: entry.dayNumber, durationMinutes: item.duration }]))) as Record<string, ItineraryItemMeta>;
+    set({ currentTrip: nextTrip, tripDays: nextDays, itinerary: nextItinerary, itemMeta: nextMeta });
+    return nextTrip;
   },
 
   clearError: () => set({ error: null }),
