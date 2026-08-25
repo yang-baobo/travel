@@ -90,11 +90,15 @@ class AIServiceTest(unittest.TestCase):
         with (
             patch.object(ai, "GLM_API_KEY", "test-key"),
             patch.object(ai, "GLM_API_BASE_URL", "https://relay.example/v1"),
-            patch.object(ai, "_post_json", return_value=json.dumps(upstream, ensure_ascii=False)),
+            patch.object(ai, "_post_json", return_value=json.dumps(upstream, ensure_ascii=False)) as post_json,
         ):
             result = ai.planning_intent_with_glm(request)
         self.assertEqual(result["provider"], "remote_glm")
         self.assertEqual(result["normalizedRequest"]["city"], "北京")
+        upstream_payload = post_json.call_args.args[2]
+        self.assertEqual(upstream_payload["thinking"], {"type": "disabled"})
+        self.assertEqual(upstream_payload["response_format"], {"type": "json_object"})
+        self.assertEqual(upstream_payload["max_tokens"], 800)
 
     def test_plan_intent_rejects_forged_location_fields(self) -> None:
         upstream = {

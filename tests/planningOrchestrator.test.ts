@@ -87,17 +87,19 @@ describe('Planning Orchestrator', () => {
     assert.match(result.draft?.blockingIssues.join(' ') || '', /没有同时满足/);
   });
 
-  test('uses a FlyAI-supported hotel sort instead of the rejected rating sort', async () => {
+  test('uses FlyAI provider ranking and forwards the structured hotel level', async () => {
     const base = planningRequest();
     const request = planningRequest({
-      preferenceSnapshot: { ...base.preferenceSnapshot, needHotel: true },
+      preferenceSnapshot: { ...base.preferenceSnapshot, needHotel: true, hotelLevel: 'luxury' },
     });
     let hotelSort: string | undefined;
+    let hotelStars: number[] | undefined;
     const orchestrator = createPlanningOrchestrator({
       getIntent: async () => intent(request),
       searchPlaces: async category => ({ city: { name: '北京', adcode: '110000', citycode: '010' }, category, source: 'amap', page: 1, pageSize: 1, total: 0, hasMore: false, items: [] }),
       searchHotels: async params => {
         hotelSort = params.sortBy;
+        hotelStars = params.stars;
         return {
           hotels: [],
           meta: {
@@ -116,7 +118,8 @@ describe('Planning Orchestrator', () => {
     });
 
     await orchestrator.plan({ sessionId: 'planning-hotel-contract', request, messages: [] });
-    assert.equal(hotelSort, 'price_asc');
+    assert.equal(hotelSort, 'none');
     assert.notEqual(hotelSort, 'rating');
+    assert.deepEqual(hotelStars, [5]);
   });
 });

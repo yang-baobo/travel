@@ -277,6 +277,9 @@ def planning_intent_with_glm(payload: PlanningIntentRequest) -> dict[str, Any]:
             "model": GLM_MODEL,
             "messages": messages,
             "temperature": 0.1,
+            "thinking": {"type": "disabled"},
+            "response_format": {"type": "json_object"},
+            "max_tokens": 800,
             "stream": False,
         },
     )

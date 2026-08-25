@@ -142,6 +142,13 @@ function hotelGeoRequest(hotel: TravelHotel, destination: string) {
   };
 }
 
+function hotelStarsForPreference(level: string): number[] | undefined {
+  if (level === 'budget') return [2, 3];
+  if (level === 'mid') return [3, 4];
+  if (level === 'luxury') return [5];
+  return undefined;
+}
+
 function withVerifiedHotelGeo(hotel: TravelHotel, geo: HotelGeoResponse): TravelHotel | null {
   if (!geo.coordinateVerified || geo.coordinateSource !== 'amap' || geo.latitude === null || geo.longitude === null) return null;
   return {
@@ -290,7 +297,8 @@ export function createPlanningOrchestrator(
             checkInDate: request.preferenceSnapshot.travelStartDate,
             checkOutDate: addDays(request.preferenceSnapshot.travelStartDate, Math.max(1, request.days - 1)),
             maxReferencePrice: Math.min(hotelBudget, request.preferenceSnapshot.hotelPriceRange.max),
-            sortBy: 'price_asc',
+            stars: hotelStarsForPreference(request.preferenceSnapshot.hotelLevel),
+            sortBy: 'none',
           })
         : Promise.resolve(null);
       const [attractionsResult, restaurantsResult, hotelsResult] = await Promise.allSettled([
