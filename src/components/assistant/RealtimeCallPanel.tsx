@@ -14,6 +14,7 @@ import { useRealtimeVoice } from '../../hooks/useRealtimeVoice';
 interface Props {
   visible: boolean;
   onClose: () => void;
+  onComplete?: (transcript: Array<{ role: 'user' | 'assistant'; text: string }>) => void;
 }
 
 function formatDuration(seconds: number): string {
@@ -22,7 +23,7 @@ function formatDuration(seconds: number): string {
   return `${minutes}:${remainder}`;
 }
 
-export default function RealtimeCallPanel({ visible, onClose }: Props) {
+export default function RealtimeCallPanel({ visible, onClose, onComplete }: Props) {
   const session = useRealtimeVoice();
   const pulse = useRef(new Animated.Value(1)).current;
 
@@ -46,12 +47,13 @@ export default function RealtimeCallPanel({ visible, onClose }: Props) {
 
   const close = async () => {
     await session.endCall();
+    onComplete?.(session.transcript);
     onClose();
   };
 
   const statusText = session.status === 'connecting' ? '正在连接 StepAudio 2.5…'
     : session.status === 'user_speaking' ? '我在听，你继续说'
-    : session.status === 'assistant_speaking' ? '小猫正在回答'
+    : session.status === 'assistant_speaking' ? 'AI 旅伴正在回答'
     : session.status === 'listening' ? '已接通'
     : session.status === 'error' ? '连接失败'
     : '通话已结束';
@@ -71,7 +73,7 @@ export default function RealtimeCallPanel({ visible, onClose }: Props) {
 
         <View style={styles.hero}>
           <Animated.View style={[styles.avatarHalo, { transform: [{ scale: pulse }] }]}>
-            <View style={styles.avatar}><Text style={styles.avatarText}>🐱</Text></View>
+            <View style={styles.avatar}><Ionicons name="sparkles" size={48} color="#FFFFFF" /><Text style={styles.avatarText}>AI TRAVEL</Text></View>
           </Animated.View>
           <Text style={styles.title}>北京旅行助手</Text>
           <Text style={styles.status}>{statusText}</Text>
@@ -81,13 +83,13 @@ export default function RealtimeCallPanel({ visible, onClose }: Props) {
         <ScrollView style={styles.transcript} contentContainerStyle={styles.transcriptContent}>
           {session.transcript.slice(-4).map(item => (
             <View key={item.id} style={styles.transcriptLine}>
-              <Text style={styles.transcriptRole}>{item.role === 'user' ? '你' : '小猫'}</Text>
+              <Text style={styles.transcriptRole}>{item.role === 'user' ? '你' : '旅伴'}</Text>
               <Text style={styles.transcriptText}>{item.text}</Text>
             </View>
           ))}
           {!!session.assistantDraft && (
             <View style={styles.transcriptLine}>
-              <Text style={styles.transcriptRole}>小猫</Text>
+              <Text style={styles.transcriptRole}>旅伴</Text>
               <Text style={[styles.transcriptText, { opacity: 0.65 }]}>{session.assistantDraft}</Text>
             </View>
           )}
@@ -119,27 +121,27 @@ export default function RealtimeCallPanel({ visible, onClose }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#101827', paddingHorizontal: 24, paddingTop: 56, paddingBottom: 42 },
+  container: { flex: 1, backgroundColor: '#082F2B', paddingHorizontal: 24, paddingTop: 56, paddingBottom: 42 },
   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  eyebrow: { color: '#8EA3C6', fontSize: 11, fontWeight: '700', letterSpacing: 1.4 },
-  duration: { color: '#DDE7F7', fontSize: 15, marginTop: 4, fontVariant: ['tabular-nums'] },
-  closeButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#21304A', alignItems: 'center', justifyContent: 'center' },
+  eyebrow: { color: '#6FE0CD', fontSize: 10, fontWeight: '900', letterSpacing: 1.7 },
+  duration: { color: 'rgba(255,255,255,0.78)', fontSize: 15, marginTop: 5, fontVariant: ['tabular-nums'] },
+  closeButton: { width: 44, height: 44, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center' },
   hero: { alignItems: 'center', marginTop: 48 },
-  avatarHalo: { width: 150, height: 150, borderRadius: 75, backgroundColor: '#243B62', alignItems: 'center', justifyContent: 'center' },
-  avatar: { width: 112, height: 112, borderRadius: 56, backgroundColor: '#FFF6E9', alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 56 },
-  title: { color: '#fff', fontSize: 24, fontWeight: '700', marginTop: 22 },
-  status: { color: '#AFC0DA', fontSize: 15, marginTop: 8 },
-  error: { color: '#FFAAA5', fontSize: 13, textAlign: 'center', marginTop: 12, maxWidth: 310, lineHeight: 19 },
-  transcript: { flex: 1, marginTop: 28 },
-  transcriptContent: { paddingBottom: 12 },
-  transcriptLine: { flexDirection: 'row', marginBottom: 12 },
-  transcriptRole: { color: '#7894BE', width: 42, fontSize: 13, fontWeight: '700' },
-  transcriptText: { color: '#DCE7F8', flex: 1, fontSize: 14, lineHeight: 21 },
-  controls: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingTop: 16 },
+  avatarHalo: { width: 160, height: 160, borderRadius: 80, backgroundColor: 'rgba(33,198,181,0.14)', borderWidth: 1, borderColor: 'rgba(111,224,205,0.24)', alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 116, height: 116, borderRadius: 40, backgroundColor: '#0E9F93', alignItems: 'center', justifyContent: 'center', shadowColor: '#21C6B5', shadowOpacity: 0.34, shadowRadius: 24 },
+  avatarText: { color: 'rgba(255,255,255,0.72)', fontSize: 8, fontWeight: '900', letterSpacing: 1.3, marginTop: 5 },
+  title: { color: '#FFFFFF', fontSize: 25, fontWeight: '900', marginTop: 24 },
+  status: { color: '#8DD8CB', fontSize: 15, marginTop: 8 },
+  error: { color: '#FFB5AE', fontSize: 13, textAlign: 'center', marginTop: 12, maxWidth: 310, lineHeight: 19 },
+  transcript: { flex: 1, marginTop: 30 },
+  transcriptContent: { padding: 16, paddingBottom: 12, backgroundColor: 'rgba(255,255,255,0.055)', borderRadius: 24 },
+  transcriptLine: { flexDirection: 'row', marginBottom: 13 },
+  transcriptRole: { color: '#6FE0CD', width: 46, fontSize: 12, fontWeight: '800' },
+  transcriptText: { color: 'rgba(255,255,255,0.82)', flex: 1, fontSize: 14, lineHeight: 21 },
+  controls: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingTop: 18 },
   control: { width: 84, alignItems: 'center' },
-  controlCircle: { width: 58, height: 58, borderRadius: 29, backgroundColor: '#2A3952', alignItems: 'center', justifyContent: 'center' },
-  controlCircleActive: { backgroundColor: '#526987' },
-  hangupCircle: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#E84B4B', alignItems: 'center', justifyContent: 'center' },
-  controlLabel: { color: '#D7E1F1', fontSize: 12, marginTop: 9 },
+  controlCircle: { width: 60, height: 60, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.11)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
+  controlCircleActive: { backgroundColor: '#0E9F93' },
+  hangupCircle: { width: 70, height: 70, borderRadius: 25, backgroundColor: '#D65B55', alignItems: 'center', justifyContent: 'center' },
+  controlLabel: { color: 'rgba(255,255,255,0.76)', fontSize: 12, marginTop: 9 },
 });

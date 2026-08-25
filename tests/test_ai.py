@@ -68,6 +68,61 @@ class AIServiceTest(unittest.TestCase):
         self.assertNotIn("secret-glm", serialized)
         self.assertNotIn("secret-step", serialized)
 
+    def test_plan_intent_is_schema_validated_and_marks_remote_provider(self) -> None:
+        upstream = {
+            "choices": [{"message": {"content": json.dumps({
+                "needsClarification": False,
+                "clarificationQuestions": [],
+                "normalizedRequest": {
+                    "userInput": "带父母游北京",
+                    "city": "北京",
+                    "days": 3,
+                    "people": 2,
+                    "totalBudget": 5000,
+                    "pace": "relaxed",
+                    "mode": "auto",
+                },
+                "requestPatch": {},
+                "explanation": "结构化参数完整。",
+            }, ensure_ascii=False)}}]
+        }
+        request = ai.PlanningIntentRequest(request={"userInput": "带父母游北京"})
+        with (
+            patch.object(ai, "GLM_API_KEY", "test-key"),
+            patch.object(ai, "GLM_API_BASE_URL", "https://relay.example/v1"),
+            patch.object(ai, "_post_json", return_value=json.dumps(upstream, ensure_ascii=False)),
+        ):
+            result = ai.planning_intent_with_glm(request)
+        self.assertEqual(result["provider"], "remote_glm")
+        self.assertEqual(result["normalizedRequest"]["city"], "北京")
+
+    def test_plan_intent_rejects_forged_location_fields(self) -> None:
+        upstream = {
+            "choices": [{"message": {"content": json.dumps({
+                "needsClarification": False,
+                "clarificationQuestions": [],
+                "normalizedRequest": {
+                    "userInput": "北京旅行",
+                    "city": "北京",
+                    "days": 2,
+                    "people": 2,
+                    "totalBudget": 3000,
+                    "pace": "standard",
+                    "mode": "auto",
+                },
+                "requestPatch": {"latitude": 39.9},
+                "explanation": "非法事实字段",
+            }, ensure_ascii=False)}}]
+        }
+        request = ai.PlanningIntentRequest(request={"userInput": "北京旅行"})
+        with (
+            patch.object(ai, "GLM_API_KEY", "test-key"),
+            patch.object(ai, "GLM_API_BASE_URL", "https://relay.example/v1"),
+            patch.object(ai, "_post_json", return_value=json.dumps(upstream, ensure_ascii=False)),
+        ):
+            with self.assertRaises(ai.AIUpstreamError):
+                ai.planning_intent_with_glm(request)
+
 
 if __name__ == "__main__":
     unittest.main()

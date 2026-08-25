@@ -18,6 +18,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { useElderlyMode } from '../../theme/ElderlyModeContext';
@@ -138,7 +139,11 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
 
     try {
       const currentPhase = useAssistantStore.getState().phase;
-      const response = await chatService.sendMessage(text.trim(), currentPhase);
+      const response = await chatService.sendMessage(
+        text.trim(),
+        currentPhase,
+        messages.map(message => ({ role: message.role, content: message.text })),
+      );
       const navigationActions = executeActions(response.actions);
 
       const assistantBubble: ChatBubble = {
@@ -175,7 +180,7 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
     } finally {
       setIsProcessing(false);
     }
-  }, [speakText]);
+  }, [messages, speakText]);
 
   // 切换展开/收起
   const handleToggleExpand = useCallback(() => {
@@ -233,7 +238,7 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
   });
 
   const fabSize = isElderlyMode ? 56 : 48;
-  const statusColor = status === 'speaking' ? '#FF9800' : status === 'listening' ? '#4CAF50' : colors.primary;
+  const statusColor = status === 'speaking' ? '#D8A33B' : status === 'listening' ? '#21C6B5' : 'rgba(255,255,255,0.55)';
 
   return (
     <View style={styles.container} pointerEvents="box-none">
@@ -254,11 +259,13 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
             {/* 面板头部 */}
             <View style={styles.panelHeader}>
               <View style={styles.headerLeft}>
-                <Text style={{ fontSize: 16 }}>🐱</Text>
-                <Text style={[typography.caption, { marginLeft: 4, fontWeight: '600' }]}>
-                  {phase === 'presenting' ? '路线介绍中...' :
-                   phase === 'adjusting' ? '告诉我您的想法' : '小猫助手'}
-                </Text>
+                <View style={styles.assistantMarkSmall}><Ionicons name="sparkles" size={14} color="#FFFFFF" /></View>
+                <View>
+                  <Text style={styles.panelTitle}>北京 AI 旅伴</Text>
+                  <Text style={styles.panelSubtitle}>
+                    {phase === 'presenting' ? '正在介绍路线' : phase === 'adjusting' ? '随时继续调整' : '在线陪你规划'}
+                  </Text>
+                </View>
               </View>
               <View style={styles.headerRight}>
                 <TouchableOpacity
@@ -268,11 +275,11 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
                   <Ionicons
                     name={isPhoneMode ? 'call' : 'call-outline'}
                     size={scaleIcon(12)}
-                    color={isPhoneMode ? '#fff' : colors.textSecondary}
+                    color={isPhoneMode ? '#FFFFFF' : 'rgba(255,255,255,0.62)'}
                   />
                 </TouchableOpacity>
                 <TouchableOpacity onPress={handleToggleExpand} style={styles.collapseBtn}>
-                  <Ionicons name="chevron-down" size={scaleIcon(18)} color={colors.textSecondary} />
+                  <Ionicons name="chevron-down" size={scaleIcon(18)} color="rgba(255,255,255,0.70)" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -306,7 +313,7 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
                   ]}
                 >
                   {msg.role === 'assistant' && (
-                    <Text style={styles.bubbleAvatar}>🐱</Text>
+                    <View style={styles.bubbleAvatar}><Ionicons name="sparkles" size={12} color="#FFFFFF" /></View>
                   )}
                   <View style={[
                     styles.bubbleContent,
@@ -314,7 +321,7 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
                   ]}>
                     <Text style={[
                       { fontSize: 13, lineHeight: 18 },
-                      msg.role === 'user' ? { color: '#fff' } : { color: '#333' },
+                      msg.role === 'user' ? { color: '#FFFFFF' } : { color: '#0F2B27' },
                     ]}>
                       {msg.text}
                     </Text>
@@ -332,9 +339,9 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
 
               {isProcessing && (
                 <View style={[styles.bubble, styles.bubbleAssistant]}>
-                  <Text style={styles.bubbleAvatar}>🐱</Text>
+                  <View style={styles.bubbleAvatar}><Ionicons name="sparkles" size={12} color="#FFFFFF" /></View>
                   <View style={[styles.bubbleContent, styles.bubbleContentAssistant]}>
-                    <Text style={{ fontSize: 13, color: '#333' }}>正在思考...</Text>
+                    <Text style={{ fontSize: 13, color: '#0F2B27' }}>正在思考...</Text>
                   </View>
                 </View>
               )}
@@ -399,22 +406,16 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
 
         {/* 小猫按钮 */}
         <TouchableOpacity
-          style={[
-            styles.fab,
-            {
-              width: fabSize,
-              height: fabSize,
-              borderRadius: fabSize / 2,
-              borderColor: statusColor,
-              borderWidth: status !== 'idle' ? 2 : 0,
-            },
-          ]}
+          style={[styles.fab, { width: fabSize, height: fabSize, borderRadius: fabSize / 2, borderColor: statusColor }]}
           onPress={handleToggleExpand}
-          activeOpacity={0.8}
+          activeOpacity={0.84}
         >
-          <Animated.Text style={{ fontSize: isElderlyMode ? 28 : 24, transform: [{ scale: pulseAnim }] }}>
-            🐱
-          </Animated.Text>
+          <LinearGradient colors={['#21C6B5', '#08766D']} style={styles.fabGradient}>
+            <Animated.View style={{ transform: [{ scale: pulseAnim }], alignItems: 'center' }}>
+              <Ionicons name="sparkles" size={isElderlyMode ? 22 : 19} color="#FFFFFF" />
+              <Text style={styles.fabLabel}>AI</Text>
+            </Animated.View>
+          </LinearGradient>
         </TouchableOpacity>
       </View>
     </View>
@@ -422,99 +423,44 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    position: 'absolute',
-    bottom: 100,
-    right: 16,
-    alignItems: 'flex-end',
-    zIndex: 999,
-  },
+  container: { position: 'absolute', bottom: 92, right: 16, alignItems: 'flex-end', zIndex: 999 },
   panel: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 8,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
+    backgroundColor: '#F6F9F8', borderRadius: 24, overflow: 'hidden', marginBottom: 10,
+    borderWidth: 1, borderColor: 'rgba(14,159,147,0.18)', elevation: 10,
+    shadowColor: '#0F2B27', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 24,
   },
   panelHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    minHeight: 62, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 10, backgroundColor: '#0D463F',
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center' },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  modeToggleSmall: {
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  modeToggleActive: { backgroundColor: colors.primary },
-  collapseBtn: { padding: 2 },
-  statusBar: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 12, paddingVertical: 4, backgroundColor: '#FAFAFA',
-  },
-  statusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#ccc' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  assistantMarkSmall: { width: 32, height: 32, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0E9F93', borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)' },
+  panelTitle: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+  panelSubtitle: { color: 'rgba(255,255,255,0.58)', fontSize: 9, fontWeight: '600', marginTop: 2 },
+  modeToggleSmall: { width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.12)', justifyContent: 'center', alignItems: 'center' },
+  modeToggleActive: { backgroundColor: '#D8A33B' },
+  collapseBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center' },
+  statusBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 6, backgroundColor: '#EAF7F4' },
+  statusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#AAB8B4' },
   chatArea: { flex: 1 },
-  chatContent: { padding: 10, paddingBottom: 4 },
-  bubble: { flexDirection: 'row', marginBottom: 8, alignItems: 'flex-start' },
+  chatContent: { padding: 12, paddingBottom: 6 },
+  bubble: { flexDirection: 'row', marginBottom: 9, alignItems: 'flex-start' },
   bubbleUser: { justifyContent: 'flex-end' },
   bubbleAssistant: { justifyContent: 'flex-start' },
-  bubbleAvatar: { fontSize: 14, marginRight: 4, marginTop: 2 },
-  bubbleContent: {
-    maxWidth: '80%', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12,
-  },
-  bubbleContentUser: { backgroundColor: colors.primary, borderBottomRightRadius: 4 },
-  bubbleContentAssistant: { backgroundColor: '#F5F5F5', borderBottomLeftRadius: 4 },
-  inputArea: {
-    borderTopWidth: 1, borderTopColor: '#F0F0F0',
-    paddingVertical: 8, paddingHorizontal: 10, backgroundColor: '#fff',
-  },
-  phoneRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-  },
-  phoneBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  textRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  textInput: {
-    flex: 1, backgroundColor: '#F5F5F5', borderRadius: 16,
-    paddingHorizontal: 12, paddingVertical: 8, fontSize: 13,
-  },
-  sendBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center',
-  },
-  fabRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-  },
-  interruptBtn: {
-    backgroundColor: '#FFEBEE',
-    justifyContent: 'center', alignItems: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-  },
-  fab: {
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
+  bubbleAvatar: { width: 24, height: 24, borderRadius: 9, marginRight: 6, marginTop: 2, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0E9F93' },
+  bubbleContent: { maxWidth: '82%', paddingHorizontal: 11, paddingVertical: 8, borderRadius: 15 },
+  bubbleContentUser: { backgroundColor: '#0E9F93', borderBottomRightRadius: 5 },
+  bubbleContentAssistant: { backgroundColor: '#FFFFFF', borderBottomLeftRadius: 5, borderWidth: 1, borderColor: '#E1EAE7' },
+  inputArea: { borderTopWidth: 1, borderTopColor: '#DDE7E4', paddingVertical: 9, paddingHorizontal: 11, backgroundColor: '#FFFFFF' },
+  phoneRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  phoneBtn: { width: 40, height: 40, borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
+  textRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  textInput: { flex: 1, backgroundColor: '#F0F5F3', borderRadius: 17, paddingHorizontal: 12, paddingVertical: 9, fontSize: 13, color: '#0F2B27' },
+  sendBtn: { width: 34, height: 34, borderRadius: 13, backgroundColor: '#0E9F93', justifyContent: 'center', alignItems: 'center' },
+  fabRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  interruptBtn: { backgroundColor: '#FFF1F2', justifyContent: 'center', alignItems: 'center', elevation: 4, shadowColor: '#0F2B27', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 8 },
+  fab: { borderWidth: 1.5, overflow: 'hidden', elevation: 9, shadowColor: '#0A514A', shadowOffset: { width: 0, height: 7 }, shadowOpacity: 0.28, shadowRadius: 14 },
+  fabGradient: { flex: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 999 },
+  fabLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 7, fontWeight: '900', letterSpacing: 0.8, marginTop: -1 },
 });

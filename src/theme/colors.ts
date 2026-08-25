@@ -25,42 +25,43 @@ type ColorsType = {
   other: string;
 };
 
+/** 与北京首页一致的全局视觉色板。 */
 const BASE_COLORS: ColorsType = {
-  primary: '#1A73E8',
-  primaryLight: '#8AB4F8',
-  primaryDark: '#1557B0',
-  secondary: '#00ACC1',
-  accent: '#6C5CE7',
+  primary: '#0E9F93',
+  primaryLight: '#8DD8CB',
+  primaryDark: '#0A6F66',
+  secondary: '#2A7F76',
+  accent: '#6E58A5',
 
-  priceRed: '#E53935',
-  successGreen: '#00C853',
-  warningYellow: '#FF9800',
+  priceRed: '#D65B55',
+  successGreen: '#258A68',
+  warningYellow: '#D8A33B',
 
-  background: '#F5F7FA',
+  background: '#F3F7F5',
   surface: '#FFFFFF',
-  textPrimary: '#1A1C2B',
-  textSecondary: '#8A8FA8',
-  border: '#E4E7ED',
-  disabled: '#C5C9D4',
+  textPrimary: '#0F2B27',
+  textSecondary: '#617571',
+  border: '#DDE7E4',
+  disabled: '#AAB8B4',
 
-  gradient: ['#1A73E8', '#4FC3F7'] as [string, string],
+  gradient: ['#17BCAA', '#08766D'] as [string, string],
 
-  ticket: '#1A73E8',
-  transport: '#6C5CE7',
-  food: '#FF9800',
-  hotel: '#00ACC1',
-  guide: '#1557B0',
-  flight: '#E91E63',
-  other: '#8A8FA8',
+  ticket: '#0E9F93',
+  transport: '#6E58A5',
+  food: '#C9853E',
+  hotel: '#2A8E86',
+  guide: '#0A6F66',
+  flight: '#B55468',
+  other: '#71827F',
 };
 
 const ELDERLY_OVERRIDES: Partial<ColorsType> = {
-  textPrimary: '#000000',
-  textSecondary: '#4A4A4A',
-  border: '#BABABA',
-  disabled: '#888888',
-  primary: '#0D47A1',
-  primaryDark: '#0A3576',
+  textPrimary: '#071C19',
+  textSecondary: '#344A46',
+  border: '#9EAEAA',
+  disabled: '#788984',
+  primary: '#08766D',
+  primaryDark: '#075A53',
 };
 
 export const colors = new Proxy(BASE_COLORS, {

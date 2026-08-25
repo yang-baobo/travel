@@ -13,6 +13,7 @@
     "test:phase3:store": "tsx --test tests/tripHotelStore.test.ts",
     "test:phase4:ui": "tsx --test tests/hotelPhase4Ui.test.ts",
     "test:phase5:route": "tsx --test tests/hotelPhase5Route.test.ts",
+    "test:planning": "tsx --test tests/planningSessionStore.test.ts tests/planningIntentSchema.test.ts tests/planningOrchestrator.test.ts tests/planningCommit.test.ts && node --test tests/homePlanningInteraction.test.mjs",
     "build": "expo export --platform web"
   },
   "dependencies": {

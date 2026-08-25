@@ -1,7 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme/colors';
+import { flowTabScreenOptions } from '../theme/navigationTheme';
 import AdminDashboardScreen from '../screens/admin-portal/AdminDashboardScreen';
 import AdminUsersScreen from '../screens/admin-portal/AdminUsersScreen';
 import AdminSettingsScreen from '../screens/admin-portal/AdminSettingsScreen';
@@ -11,22 +11,7 @@ const Tab = createBottomTabNavigator();
 export default function AdminTabNavigator() {
   return (
     <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textSecondary,
-        tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
-          borderTopWidth: 0.5,
-          paddingBottom: 4,
-          height: 56,
-        },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: '600',
-        },
-      }}
+      screenOptions={flowTabScreenOptions}
     >
       <Tab.Screen
         name="数据"

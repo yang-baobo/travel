@@ -13,6 +13,7 @@ export interface AIResponse {
   reply: string;
   actions: AIAction[];
   stage: 'collecting' | 'generating' | 'speaking' | 'adjusting' | 'done';
+  provider?: 'glm-relay' | 'remote_glm' | 'local_fallback' | 'unavailable';
   collected?: Record<string, any>;
   route_summary?: string;
 }
@@ -26,19 +27,15 @@ function normalizeStage(value?: string): LocalStage {
 }
 
 class ChatService {
-  private history: AIChatMessage[] = [];
-
-  resetConversation(): void {
-    this.history = [];
-  }
-
-  async sendMessage(userText: string, phaseContext?: string): Promise<AIResponse> {
+  async sendMessage(
+    userText: string,
+    phaseContext?: string,
+    messages: AIChatMessage[] = [],
+  ): Promise<AIResponse> {
     const userMessage: AIChatMessage = { role: 'user', content: userText };
-    const nextHistory = [...this.history, userMessage].slice(-30);
+    const nextHistory = [...messages, userMessage].slice(-30);
     try {
       const response = await sendAIChat(nextHistory, buildAssistantContext(), normalizeStage(phaseContext));
-      const assistantMessage: AIChatMessage = { role: 'assistant', content: response.reply };
-      this.history = [...nextHistory, assistantMessage].slice(-30);
       return response;
     } catch (error) {
       console.warn('GLM assistant unavailable, using local fallback:', error);
@@ -50,9 +47,11 @@ class ChatService {
         actions: [],
         stage: 'collecting' as const,
       };
-      const assistantMessage: AIChatMessage = { role: 'assistant', content: fallback.reply };
-      this.history = [...nextHistory, assistantMessage].slice(-30);
-      return fallback;
+      return {
+        ...fallback,
+        reply: `【本地规则降级】${fallback.reply}`,
+        provider: 'local_fallback',
+      } as AIResponse;
     }
   }
 

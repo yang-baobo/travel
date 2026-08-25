@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -8,6 +8,7 @@ import { borderRadius, shadow, spacing } from '../../theme/spacing';
 import { useLiveTravelStore } from '../../store/useLiveTravelStore';
 import { useRouteStore } from '../../store/useRouteStore';
 import { usePreferenceStore } from '../../store/usePreferenceStore';
+import { useTripStore } from '../../store/useTripStore';
 import { hydrateSelectedHotelGeography } from '../../services/travelData/hotel/HotelGeoService';
 import { fetchAmapRouteSegment } from '../../utils/amapService';
 import { isSameTripHotelContext } from '../../domain/tripHotel';
@@ -80,12 +81,18 @@ interface DaySchedulePlace {
 
 export default function LiveItineraryScreen() {
   const navigation = useNavigation<Navigation>();
-  const itinerary = useLiveTravelStore(state => state.itinerary);
-  const itemMeta = useLiveTravelStore(state => state.itemMeta);
-  const remove = useLiveTravelStore(state => state.removeFromItinerary);
-  const move = useLiveTravelStore(state => state.moveItineraryItem);
-  const setPlaceDay = useLiveTravelStore(state => state.setPlaceDay);
-  const setPlaceDuration = useLiveTravelStore(state => state.setPlaceDuration);
+  const currentTrip = useTripStore(state => state.currentTrip);
+  const legacyItinerary = useLiveTravelStore(state => state.itinerary);
+  const legacyItemMeta = useLiveTravelStore(state => state.itemMeta);
+  const legacyRemove = useLiveTravelStore(state => state.removeFromItinerary);
+  const legacyMove = useLiveTravelStore(state => state.moveItineraryItem);
+  const legacySetPlaceDay = useLiveTravelStore(state => state.setPlaceDay);
+  const legacySetPlaceDuration = useLiveTravelStore(state => state.setPlaceDuration);
+  const tripRemove = useTripStore(state => state.removePlace);
+  const tripMove = useTripStore(state => state.movePlace);
+  const tripSetPlaceDay = useTripStore(state => state.setPlaceDay);
+  const tripSetPlaceDuration = useTripStore(state => state.setPlaceDuration);
+  const tripSetSchedule = useTripStore(state => state.setTripSchedule);
   const selectedHotel = useRouteStore(state => state.selectedHotel);
   const selectedHotelContext = useRouteStore(state => state.selectedHotelContext);
   const reconcileSelectedHotelContext = useRouteStore(state => state.reconcileSelectedHotelContext);
@@ -95,20 +102,42 @@ export default function LiveItineraryScreen() {
   const [showTripSetup, setShowTripSetup] = useState(false);
   const [durationEditId, setDurationEditId] = useState<string | null>(null);
 
-  const travelDays = Math.max(1, dateRangeDays(preference.travelStartDate, preference.travelReturnDate));
+  const itinerary = useMemo(
+    () => currentTrip ? currentTrip.days.flatMap(day => day.stops.map(stop => stop.place)) : legacyItinerary,
+    [currentTrip, legacyItinerary],
+  );
+  const itemMeta = useMemo(() => currentTrip
+    ? Object.fromEntries(currentTrip.days.flatMap(day => day.stops.map(stop => [stop.place.id, {
+        day: day.day,
+        durationMinutes: stop.durationMinutes,
+      }])))
+    : legacyItemMeta,
+  [currentTrip, legacyItemMeta]);
+  const remove = useCallback((placeId: string) => currentTrip ? tripRemove(placeId) : legacyRemove(placeId), [currentTrip, legacyRemove, tripRemove]);
+  const move = useCallback((placeId: string, direction: -1 | 1) => currentTrip ? tripMove(placeId, direction) : legacyMove(placeId, direction), [currentTrip, legacyMove, tripMove]);
+  const setPlaceDay = useCallback((placeId: string, day: number) => currentTrip ? tripSetPlaceDay(placeId, day) : legacySetPlaceDay(placeId, day), [currentTrip, legacySetPlaceDay, tripSetPlaceDay]);
+  const setPlaceDuration = useCallback((placeId: string, minutes: number) => currentTrip ? tripSetPlaceDuration(placeId, minutes) : legacySetPlaceDuration(placeId, minutes), [currentTrip, legacySetPlaceDuration, tripSetPlaceDuration]);
+
+  const travelStartDate = currentTrip?.request.preferenceSnapshot.travelStartDate || preference.travelStartDate;
+  const travelReturnDate = currentTrip?.request.preferenceSnapshot.travelReturnDate || preference.travelReturnDate;
+  const travelDays = currentTrip?.request.days || Math.max(1, dateRangeDays(travelStartDate, travelReturnDate));
+  const dailyStartTime = currentTrip?.request.preferenceSnapshot.dailyStartTime || preference.dailyStartTime;
+  const dailyEndTime = currentTrip?.request.preferenceSnapshot.dailyEndTime || preference.dailyEndTime;
+  const transportPreference = currentTrip?.request.preferenceSnapshot.transportPreference || preference.transportPref;
+  const transportRule = currentTrip?.request.preferenceSnapshot.transportRule || preference.transportRule;
   const travelDates = useMemo(
-    () => Array.from({ length: travelDays }, (_, i) => addDaysISO(preference.travelStartDate, i)),
-    [preference.travelStartDate, travelDays],
+    () => Array.from({ length: travelDays }, (_, i) => addDaysISO(travelStartDate, i)),
+    [travelStartDate, travelDays],
   );
 
   const tripContext = useMemo<TripHotelContext>(() => ({
-    destination: preference.selectedCity,
-    checkInDate: preference.travelStartDate,
-    checkOutDate: preference.travelReturnDate,
-  }), [preference.selectedCity, preference.travelReturnDate, preference.travelStartDate]);
-  const activeHotel = selectedHotel && isSameTripHotelContext(selectedHotelContext, tripContext)
+    destination: currentTrip?.city || preference.selectedCity,
+    checkInDate: travelStartDate,
+    checkOutDate: travelReturnDate,
+  }), [currentTrip?.city, preference.selectedCity, travelReturnDate, travelStartDate]);
+  const activeHotel = currentTrip?.hotel || (selectedHotel && isSameTripHotelContext(selectedHotelContext, tripContext)
     ? selectedHotel
-    : null;
+    : null);
   const verifiedHotelEndpoint = useMemo<TravelRouteEndpoint | null>(() => {
     if (
       !activeHotel
@@ -125,14 +154,14 @@ export default function LiveItineraryScreen() {
   }, [activeHotel]);
 
   useEffect(() => {
-    reconcileSelectedHotelContext(tripContext);
-  }, [reconcileSelectedHotelContext, tripContext]);
+    if (!currentTrip) reconcileSelectedHotelContext(tripContext);
+  }, [currentTrip, reconcileSelectedHotelContext, tripContext]);
 
   useEffect(() => {
-    if (activeHotel && activeHotel.geoStatus === 'unresolved') {
+    if (!currentTrip && activeHotel && activeHotel.geoStatus === 'unresolved') {
       void hydrateSelectedHotelGeography(activeHotel.id, tripContext);
     }
-  }, [activeHotel?.id, activeHotel?.geoStatus, tripContext]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeHotel?.id, activeHotel?.geoStatus, currentTrip, tripContext]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 每天的节点链：[酒店锚点] + 当天地点 + [酒店锚点]
   const dayPlans = useMemo(() => {
@@ -197,8 +226,8 @@ export default function LiveItineraryScreen() {
         const segment = await fetchAmapRouteSegment(
           pair.from,
           pair.to,
-          preference.transportPref,
-          preference.transportRule,
+          transportPreference,
+          transportRule,
         );
         return { key: pair.key, segment };
       } catch (error) {
@@ -212,12 +241,12 @@ export default function LiveItineraryScreen() {
       setLoading(false);
     });
     return () => { active = false; };
-  }, [preference.transportPref, preference.transportRule.defaultMode, signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [signature, transportPreference, transportRule.defaultMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 计算每天时间轴：每个地点的到达/离开时间
   const daySchedules = useMemo(() => {
     return dayPlans.map(plan => {
-      const startMinute = timeToMinutes(preference.dailyStartTime || '09:00');
+      const startMinute = timeToMinutes(dailyStartTime || '09:00');
       let cursor = startMinute;
       const entries: DaySchedulePlace[] = [];
       plan.nodes.forEach((node, index) => {
@@ -234,7 +263,7 @@ export default function LiveItineraryScreen() {
       });
       return { plan, entries, dayEndMinute: cursor };
     });
-  }, [dayPlans, itemMeta, preference.dailyStartTime, segments]);
+  }, [dailyStartTime, dayPlans, itemMeta, segments]);
 
   const dayAssignCounts = useMemo(() => {
     const counts: Record<number, number> = {};
@@ -246,6 +275,10 @@ export default function LiveItineraryScreen() {
   }, [itinerary, itemMeta, travelDays]);
 
   const applyTripSetup = (startDate: string, days: number) => {
+    if (currentTrip) {
+      tripSetSchedule(startDate, days);
+      return;
+    }
     preference.setTravelStartDate(startDate);
     preference.setTravelReturnDate(addDaysISO(startDate, days - 1));
     preference.setTravelDays(days);
@@ -278,10 +311,10 @@ export default function LiveItineraryScreen() {
             <Ionicons name="calendar-outline" size={20} color={colors.primary} />
             <View style={styles.tripSetupCopy}>
               <Text style={styles.tripSetupTitle}>
-                {formatDayDate(preference.travelStartDate)} 出发 · 共{travelDays}天{Math.max(0, travelDays - 1)}晚
+                {formatDayDate(travelStartDate)} 出发 · 共{travelDays}天{Math.max(0, travelDays - 1)}晚
               </Text>
               <Text style={styles.tripSetupText}>
-                每天 {preference.dailyStartTime || '09:00'}-{preference.dailyEndTime || '19:00'} 安排行程；地点会按天分组并标出游玩时间
+                每天 {dailyStartTime || '09:00'}-{dailyEndTime || '19:00'} 安排行程；地点会按天分组并标出游玩时间
               </Text>
             </View>
             <TouchableOpacity style={styles.tripSetupBtn} onPress={() => setShowTripSetup(true)}>
@@ -334,7 +367,7 @@ export default function LiveItineraryScreen() {
         )}
 
         {daySchedules.map(({ plan, entries, dayEndMinute }) => {
-          const endLimit = timeToMinutes(preference.dailyEndTime || '19:00');
+          const endLimit = timeToMinutes(dailyEndTime || '19:00');
           const overflow = plan.places.length > 0 && dayEndMinute > endLimit;
           return (
             <View key={plan.day} style={styles.daySection}>
@@ -343,7 +376,7 @@ export default function LiveItineraryScreen() {
                 <Text style={styles.dayHeaderText}>{formatDayDate(plan.date)}</Text>
                 {plan.places.length > 0 && (
                   <Text style={styles.dayHeaderMeta}>
-                    {minutesToClock(timeToMinutes(preference.dailyStartTime || '09:00'))} - {minutesToClock(dayEndMinute)}
+                    {minutesToClock(timeToMinutes(dailyStartTime || '09:00'))} - {minutesToClock(dayEndMinute)}
                   </Text>
                 )}
                 {loading && <ActivityIndicator size="small" color={colors.primary} />}
@@ -352,7 +385,7 @@ export default function LiveItineraryScreen() {
                 <View style={styles.overflowNote}>
                   <Ionicons name="time-outline" size={14} color={colors.warningYellow} />
                   <Text style={styles.overflowText}>
-                    当天安排已超过 {preference.dailyEndTime || '19:00'}，建议缩短游玩时长或把地点移到其他天
+                    当天安排已超过 {dailyEndTime || '19:00'}，建议缩短游玩时长或把地点移到其他天
                   </Text>
                 </View>
               )}
@@ -429,7 +462,7 @@ export default function LiveItineraryScreen() {
       {/* 行程日期/天数设置弹窗 */}
       <TripSetupModal
         visible={showTripSetup}
-        startDate={preference.travelStartDate}
+        startDate={travelStartDate}
         days={travelDays}
         onClose={() => setShowTripSetup(false)}
         onApply={applyTripSetup}
@@ -663,7 +696,7 @@ function RouteSegment({ result, loading }: { result?: SegmentResult; loading: bo
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.lg, paddingBottom: 40 },
-  tripSetupCard: { backgroundColor: '#EAF1FF', borderRadius: borderRadius.lg, padding: spacing.lg, marginBottom: spacing.md },
+  tripSetupCard: { backgroundColor: '#E6F5F1', borderRadius: borderRadius.lg, padding: spacing.lg, marginBottom: spacing.md },
   tripSetupHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   tripSetupCopy: { flex: 1 },
   tripSetupTitle: { color: colors.primaryDark, fontSize: 15, fontWeight: '800' },
@@ -698,7 +731,7 @@ const styles = StyleSheet.create({
   stopTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   stopName: { color: colors.textPrimary, fontSize: 15, fontWeight: '700', flex: 1 },
   blindBadge: { backgroundColor: '#EDE9FE', borderRadius: 99, paddingHorizontal: 7, paddingVertical: 2 },
-  blindBadgeText: { color: '#6D28D9', fontSize: 10, fontWeight: '800' },
+  blindBadgeText: { color: '#6E58A5', fontSize: 10, fontWeight: '800' },
   stopMeta: { marginTop: 3, color: colors.textSecondary, fontSize: 11 },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, backgroundColor: colors.background, borderRadius: borderRadius.sm, paddingHorizontal: spacing.sm, paddingVertical: 5, alignSelf: 'flex-start' },
   timeText: { color: colors.primary, fontSize: 11, fontWeight: '700' },
@@ -726,12 +759,12 @@ const styles = StyleSheet.create({
   routeErrorText: { flex: 1, color: colors.priceRed, fontSize: 11 },
   addMore: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, marginTop: spacing.xl, padding: spacing.lg, borderRadius: borderRadius.md, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.primary },
   addMoreText: { color: colors.primary, fontWeight: '700', fontSize: 14 },
-  blindBoxButton: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginTop: spacing.md, padding: spacing.lg, borderRadius: borderRadius.md, backgroundColor: '#312E81' },
+  blindBoxButton: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginTop: spacing.md, padding: spacing.lg, borderRadius: borderRadius.md, backgroundColor: '#463B63' },
   blindBoxButtonCopy: { flex: 1 },
   blindBoxButtonTitle: { color: '#FFF', fontSize: 14, fontWeight: '800' },
   blindBoxButtonText: { color: 'rgba(255,255,255,0.7)', fontSize: 10, marginTop: 3 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 36, backgroundColor: colors.background },
-  emptyIcon: { width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EAF1FF' },
+  emptyIcon: { width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E6F5F1' },
   emptyTitle: { marginTop: spacing.xl, color: colors.textPrimary, fontSize: 20, fontWeight: '800' },
   emptyText: { marginTop: spacing.sm, color: colors.textSecondary, fontSize: 13, lineHeight: 20, textAlign: 'center' },
   primaryButton: { marginTop: spacing.xl, backgroundColor: colors.primary, borderRadius: borderRadius.md, paddingVertical: 12, paddingHorizontal: spacing.xxl },

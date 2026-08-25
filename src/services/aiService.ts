@@ -1,6 +1,7 @@
-import { Platform } from 'react-native';
 import { apiRequest } from './apiClient';
 import type { AIResponse } from '../utils/chatService';
+import type { PlanIntent, PlanningMessage, PlanningRequest } from '../types/planning';
+import { validatePlanIntent } from '../utils/planIntentSchema';
 
 export interface AIChatMessage {
   role: 'user' | 'assistant';
@@ -35,6 +36,24 @@ export function sendAIChat(
   }, 45_000);
 }
 
+export async function requestPlanningIntent(
+  request: PlanningRequest,
+  messages: PlanningMessage[],
+): Promise<PlanIntent> {
+  const result: unknown = await apiRequest('/api/ai/plan-intent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      request,
+      messages: messages
+        .filter(message => message.role !== 'system')
+        .slice(-20)
+        .map(message => ({ role: message.role, content: message.text })),
+    }),
+  }, 45_000);
+  return validatePlanIntent(result);
+}
+
 export async function transcribeAudio(
   audioBase64: string,
   format: 'wav' | 'm4a' | 'mp3' | 'ogg' | 'pcm' = 'wav',
@@ -64,7 +83,7 @@ export function getRealtimeWebSocketUrl(): string | null {
   }
 
   // 同域 ASGI 部署可以零配置工作；Expo 本地网页开发仍建议显式填写端口。
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && !/^localhost:\d+$/.test(window.location.host)) {
+  if (typeof window !== 'undefined' && !/^localhost:\d+$/.test(window.location.host)) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}/api/ai/realtime`;
   }

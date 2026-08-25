@@ -1,7 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme/colors';
+import { flowTabScreenOptions } from '../theme/navigationTheme';
 import ExploreStack from './ExploreStack';
 import CustomStack from './CustomStack';
 import OrderStack from './OrderStack';
@@ -12,22 +12,7 @@ const Tab = createBottomTabNavigator();
 export default function UserTabNavigator() {
   return (
     <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textSecondary,
-        tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
-          borderTopWidth: 0.5,
-          paddingBottom: 4,
-          height: 56,
-        },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: '600',
-        },
-      }}
+      screenOptions={flowTabScreenOptions}
     >
       <Tab.Screen
         name="探索"

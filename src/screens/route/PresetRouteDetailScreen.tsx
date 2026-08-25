@@ -494,7 +494,7 @@ export default function PresetRouteDetailScreen() {
               return (
                 <View style={styles.hotelSection}>
                   <View style={styles.hotelItem}>
-                    <Ionicons name="bed-outline" size={14} color="#8B5CF6" />
+                    <Ionicons name="bed-outline" size={14} color="#6E58A5" />
                     <View style={{ flex: 1 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
                         <Text style={[typography.caption, { fontWeight: '600' }]}>
@@ -668,8 +668,8 @@ export default function PresetRouteDetailScreen() {
         {/* 版本附加费 */}
         {routeVersion === 'luxury' && (
           <View style={[styles.costSubtotal, { marginTop: spacing.md }]}>
-            <Text style={[typography.bodySmall, { color: '#8B5CF6' }]}>豪华版附加</Text>
-            <Text style={[typography.priceSmall, { color: '#8B5CF6' }]}>+60%</Text>
+            <Text style={[typography.bodySmall, { color: '#6E58A5' }]}>豪华版附加</Text>
+            <Text style={[typography.priceSmall, { color: '#6E58A5' }]}>+60%</Text>
           </View>
         )}
         {roomTypeExtraCost > 0 && (
@@ -697,8 +697,8 @@ export default function PresetRouteDetailScreen() {
         </Text>
         <View style={styles.extraOptionsRow}>
           <TouchableOpacity style={styles.extraOptionCard} onPress={handleGoToRoutePlan}>
-            <View style={[styles.extraOptionIcon, { backgroundColor: '#8B5CF620' }]}>
-              <Ionicons name="bed-outline" size={24} color="#8B5CF6" />
+            <View style={[styles.extraOptionIcon, { backgroundColor: '#6E58A520' }]}>
+              <Ionicons name="bed-outline" size={24} color="#6E58A5" />
             </View>
             <Text style={[typography.bodySmall, { fontWeight: '600' }]}>多住一晚</Text>
             <Text style={typography.caption}>延长行程</Text>
@@ -1244,7 +1244,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
   },
   versionBtnLuxActive: {
-    backgroundColor: '#8B5CF6',
+    backgroundColor: '#6E58A5',
   },
   versionBtnText: {
     fontSize: 12,
@@ -1262,7 +1262,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.full,
   },
   versionTagLux: {
-    backgroundColor: '#8B5CF620',
+    backgroundColor: '#6E58A520',
   },
   versionTagText: {
     fontSize: 9,
@@ -1270,7 +1270,7 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
   versionTagTextLux: {
-    color: '#8B5CF6',
+    color: '#6E58A5',
   },
   // 房型选择
   roomTypeRow: {
@@ -1291,8 +1291,8 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   roomChipActive: {
-    backgroundColor: '#8B5CF6',
-    borderColor: '#8B5CF6',
+    backgroundColor: '#6E58A5',
+    borderColor: '#6E58A5',
   },
   roomChipText: {
     fontSize: 12,

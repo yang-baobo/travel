@@ -60,6 +60,42 @@ class AIChatRequest(BaseModel):
     phase: str | None = Field(default=None, max_length=40)
 
 
+class PlanningIntentRequest(BaseModel):
+    request: dict[str, Any]
+    messages: list[ChatMessage] = Field(default_factory=list, max_length=30)
+
+
+class PlanIntentNormalizedRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    userInput: str = Field(min_length=1, max_length=8_000)
+    city: Literal["北京"]
+    days: int = Field(ge=1, le=15)
+    people: int = Field(ge=1, le=20)
+    totalBudget: float | None = Field(default=None, gt=0)
+    pace: Literal["relaxed", "standard", "packed"]
+    mode: Literal["self", "complete", "auto"]
+
+
+class PlanIntentPatch(BaseModel):
+    model_config = {"extra": "forbid"}
+    days: int | None = Field(default=None, ge=1, le=15)
+    people: int | None = Field(default=None, ge=1, le=20)
+    totalBudget: float | None = Field(default=None, gt=0)
+    pace: Literal["relaxed", "standard", "packed"] | None = None
+    mode: Literal["self", "complete", "auto"] | None = None
+
+
+class PlanIntentResponse(BaseModel):
+    model_config = {"extra": "forbid"}
+    needsClarification: bool
+    clarificationQuestions: list[str] = Field(default_factory=list, max_length=3)
+    normalizedRequest: PlanIntentNormalizedRequest
+    requestPatch: PlanIntentPatch = Field(default_factory=PlanIntentPatch)
+    explanation: str = Field(min_length=1, max_length=2_000)
+    provider: Literal["remote_glm"] = "remote_glm"
+    model: str
+
+
 class AudioFormat(BaseModel):
     type: Literal["wav", "m4a", "mp3", "ogg", "pcm"] = "wav"
     codec: str | None = Field(default=None, max_length=40)
@@ -91,6 +127,20 @@ SYSTEM_PROMPT = """你是“北京旅行”的 AI 行程助手。你负责通过
 
 
 REALTIME_PROMPT = """你是“北京旅行”的电话式语音助手。用自然、温暖、简短的中文交流，像真人旅行顾问一样每次只说一到三句话。帮助用户澄清路线、景点、酒店和餐饮需求。不得编造价格、余票、营业时间或路线耗时；涉及过敏、危险项目、行动能力、预算与夜间限制时必须保守处理并明确提醒。你可以提出建议，但在实时数据未查询前必须说明建议仍需平台确认。"""
+
+
+PLAN_INTENT_PROMPT = """你是“北京旅行”的规划意图规范化器，只负责理解用户输入，不负责生成行程事实。
+
+必须返回一个 JSON 对象，禁止 Markdown。字段必须严格为：
+{"needsClarification":false,"clarificationQuestions":[],"normalizedRequest":{"userInput":"","city":"北京","days":4,"people":2,"totalBudget":5000,"pace":"relaxed|standard|packed","mode":"self|complete|auto"},"requestPatch":{},"explanation":""}
+
+规则：
+1. 只可规范化或修正 days、people、totalBudget、pace、mode；没有明确依据时沿用结构化请求。
+2. 不得输出、创造或修改任何地点 ID、坐标、酒店价格、营业时间、门票、余票或交通耗时。
+3. 城市固定为北京。候选地点只用于理解用户已选内容，不能改写其 sourceId 或坐标。
+4. 最多追问三个会阻止规划的关键问题。已有结构化参数不得重复追问。
+5. 过敏、行动能力、夜间与危险项目限制不允许放宽。
+6. requestPatch 只写确实需要修改且有用户原话依据的字段；否则返回空对象。"""
 
 
 def ai_provider_status() -> dict[str, Any]:
@@ -208,6 +258,41 @@ def chat_with_glm(payload: AIChatRequest) -> dict[str, Any]:
     result["provider"] = "glm-relay"
     result["model"] = GLM_MODEL
     return result
+
+
+def planning_intent_with_glm(payload: PlanningIntentRequest) -> dict[str, Any]:
+    if not GLM_API_KEY:
+        raise AIConfigurationError("尚未配置 GLM_API_KEY")
+    request_json = json.dumps(payload.request, ensure_ascii=False, separators=(",", ":"))[:18_000]
+    history = [{"role": item.role, "content": item.content} for item in payload.messages[-20:]]
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": PLAN_INTENT_PROMPT},
+        *history,
+        {"role": "user", "content": f"请规范化以下结构化规划请求：{request_json}"},
+    ]
+    raw = _post_json(
+        _chat_url(),
+        GLM_API_KEY,
+        {
+            "model": GLM_MODEL,
+            "messages": messages,
+            "temperature": 0.1,
+            "stream": False,
+        },
+    )
+    try:
+        response = json.loads(raw)
+        content = _extract_text_content(response["choices"][0]["message"]["content"])
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE)
+        parsed = json.loads(cleaned)
+        if not isinstance(parsed, dict):
+            raise TypeError("PlanIntent is not an object")
+        parsed["provider"] = "remote_glm"
+        parsed["model"] = GLM_MODEL
+        validated = PlanIntentResponse.model_validate(parsed)
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError, ValueError) as exc:
+        raise AIUpstreamError("GLM 返回的 PlanIntent 未通过 Schema 校验") from exc
+    return validated.model_dump(exclude_none=True)
 
 
 def transcribe_with_stepfun(payload: ASRRequest) -> dict[str, Any]:

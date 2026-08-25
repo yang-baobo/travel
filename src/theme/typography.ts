@@ -7,28 +7,28 @@ const ELDERLY_LINE_SCALE = 1.35;
 type TypographyKey = 'h1' | 'h2' | 'h3' | 'body' | 'bodySmall' | 'caption' | 'price' | 'priceSmall' | 'tag' | 'button';
 
 // 基础颜色值（避免循环依赖，直接写值）
-const TEXT_PRIMARY = '#1A1C2B';
+const TEXT_PRIMARY = '#0F2B27';
 const TEXT_PRIMARY_ELDERLY = '#000000';
-const TEXT_SECONDARY = '#8A8FA8';
+const TEXT_SECONDARY = '#617571';
 const TEXT_SECONDARY_ELDERLY = '#4A4A4A';
-const PRICE_RED = '#E53935';
+const PRICE_RED = '#D65B55';
 
 const BASE_TYPOGRAPHY: Record<TypographyKey, TextStyle> = {
   h1: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 26,
+    fontWeight: '800',
     color: TEXT_PRIMARY,
     lineHeight: 32,
   },
   h2: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 21,
+    fontWeight: '800',
     color: TEXT_PRIMARY,
     lineHeight: 28,
   },
   h3: {
     fontSize: 17,
-    fontWeight: '600',
+    fontWeight: '700',
     color: TEXT_PRIMARY,
     lineHeight: 24,
   },

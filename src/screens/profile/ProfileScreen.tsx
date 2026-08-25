@@ -48,7 +48,7 @@ export default function ProfileScreen() {
         {/* Menu Items */}
         <View style={styles.menuSection}>
           <TouchableOpacity style={styles.prefItem} activeOpacity={0.7} onPress={() => navigation.navigate('TripProfile')}>
-            <View style={[styles.prefIconWrap, { backgroundColor: '#7C3AED' }]}>
+            <View style={[styles.prefIconWrap, { backgroundColor: '#6E58A5' }]}>
               <Ionicons name="shield-checkmark" size={scaleIcon(22)} color="#FFF" />
             </View>
             <View style={{ flex: 1, marginLeft: spacing.lg }}>

@@ -1,5 +1,3 @@
-import { Platform } from 'react-native';
-
 const configuredBaseUrl = (process.env.EXPO_PUBLIC_API_BASE_URL || '').trim().replace(/\/$/, '');
 
 export class ApiError extends Error {
@@ -15,7 +13,10 @@ export class ApiError extends Error {
 
 function getBaseUrl(): string {
   if (configuredBaseUrl) return configuredBaseUrl;
-  if (Platform.OS === 'web') return '';
+  const expoPlatform = (process.env.EXPO_OS || '').toLowerCase();
+  if (expoPlatform === 'web' || typeof window !== 'undefined') return '';
+  // Node-based service tests use relative URLs and never issue a real request.
+  if (typeof navigator === 'undefined') return '';
   throw new ApiError('原生 App 尚未配置 EXPO_PUBLIC_API_BASE_URL', 0, 'API_BASE_URL_MISSING');
 }
 

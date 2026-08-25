@@ -18,12 +18,23 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { fetchFliggyAttractionEditorial, searchTravelPlaces } from '../../services/travelDataService';
 import { usePreferenceStore } from '../../store/usePreferenceStore';
-import { useAssistantStore } from '../../store/useAssistantStore';
 import { useRouteStore } from '../../store/useRouteStore';
+import { usePlanningSessionStore } from '../../store/usePlanningSessionStore';
+import { useTripStore } from '../../store/useTripStore';
+import { buildPlanningRequest } from '../../services/planningRequestBuilder';
+import {
+  answerPlanningClarification,
+  commitDraft,
+  replacePlanningDraft,
+  retryPlanningSession,
+  runPlanningSession,
+} from '../../services/planningSessionService';
+import { useVoiceEngine } from '../../hooks/useVoiceEngine';
 import type { ExploreStackParamList } from '../../types';
 import type { FliggyAttractionEditorial, TravelPlace } from '../../types/travel';
 import { DEFAULT_PLANNER_PARAMS, PLANNER_MODE_COPY, QUICK_SERVICES } from '../../data/beijingHomeUi';
 import type { PlannerCandidate, PlannerMode, PlannerParams } from '../../data/beijingHomeUi';
+import { FLYAI_WUMEN_EDITORIAL } from '../../data/beijingEditorialAssets';
 import CurrentTripCard from '../../components/home/CurrentTripCard';
 import ItineraryPreviewSheet from '../../components/home/ItineraryPreviewSheet';
 import PlannerCandidatePanel from '../../components/home/PlannerCandidatePanel';
@@ -31,6 +42,9 @@ import PlannerModeSelector from '../../components/home/PlannerModeSelector';
 import PlannerParameterPicker from '../../components/home/PlannerParameterPicker';
 import PreferenceConfirmationCard from '../../components/home/PreferenceConfirmationCard';
 import BeijingDiscoverySection from '../../components/home/BeijingDiscoverySection';
+import PlanningWorkbench from '../../components/home/PlanningWorkbench';
+import RealtimeCallPanel from '../../components/assistant/RealtimeCallPanel';
+import type { PlanningInputMethod } from '../../types/planning';
 
 type Navigation = NativeStackNavigationProp<ExploreStackParamList, 'Home'>;
 type ParameterField = keyof PlannerParams;
@@ -111,10 +125,12 @@ export default function HomeScreen() {
   const hasSetPreferences = usePreferenceStore(state => state.hasSetPreferences);
   const preferencePromptDismissed = usePreferenceStore(state => state.preferencePromptDismissed);
   const dismissPreferencePrompt = usePreferenceStore(state => state.dismissPreferencePrompt);
-  const openAssistant = useAssistantStore(state => state.openAssistant);
-  const openAssistantWithPrompt = useAssistantStore(state => state.openAssistantWithPrompt);
-  const planning = useAssistantStore(state => state.isProcessing);
-  const hasRoute = useRouteStore(state => state.routeStops.length > 0 || state.currentRouteId !== null);
+  const planningSession = usePlanningSessionStore(state => state.session);
+  const currentTrip = useTripStore(state => state.currentTrip);
+  const legacyHasRoute = useRouteStore(state => state.routeStops.length > 0 || state.currentRouteId !== null);
+  const planning = Boolean(planningSession && ['understanding', 'querying_places', 'calculating_transport', 'committing'].includes(planningSession.status));
+  const hasRoute = Boolean(currentTrip) || legacyHasRoute;
+  const plannerVoice = useVoiceEngine();
 
   const [params, setParams] = useState<PlannerParams>(DEFAULT_PLANNER_PARAMS);
   const [mode, setMode] = useState<PlannerMode>('auto');
@@ -135,9 +151,11 @@ export default function HomeScreen() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [ignoredIds, setIgnoredIds] = useState<string[]>([]);
   const [autoPlanIds, setAutoPlanIds] = useState<string[]>([]);
+  const [inputMethod, setInputMethod] = useState<PlanningInputMethod>('text');
+  const [realtimeVisible, setRealtimeVisible] = useState(false);
 
   const scrollY = useRef(new Animated.Value(0)).current;
-  const heroOpacity = useRef(new Animated.Value(0)).current;
+  const heroOpacity = useRef(new Animated.Value(1)).current;
   const heroZoom = useRef(new Animated.Value(1.03)).current;
   const intro = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(0)).current;
@@ -183,6 +201,15 @@ export default function HomeScreen() {
   useEffect(() => loadEditorialAttractions(), [loadEditorialAttractions]);
 
   useEffect(() => {
+    plannerVoice.setOnFinalText(text => {
+      setInput(current => [current.trim(), text.trim()].filter(Boolean).join(' '));
+      setSessionPreference(current => [current.trim(), text.trim()].filter(Boolean).join(' '));
+      setInputMethod('asr');
+    });
+    return () => plannerVoice.setOnFinalText(null);
+  }, [plannerVoice.setOnFinalText]);
+
+  useEffect(() => {
     Animated.timing(intro, {
       toValue: 1,
       duration: 950,
@@ -206,14 +233,20 @@ export default function HomeScreen() {
   const heroImages = useMemo(() => {
     const fliggyImages = editorialAttractions.map(place => place.imageUrl).filter(Boolean);
     const amapImages = featured.flatMap(place => place.photoUrls).filter(Boolean);
-    return Array.from(new Set([...fliggyImages, ...amapImages])).slice(0, 8);
+    return Array.from(new Set([FLYAI_WUMEN_EDITORIAL.imageUrl, ...fliggyImages, ...amapImages])).slice(0, 8);
   }, [editorialAttractions, featured]);
 
   useEffect(() => {
-    heroOpacity.setValue(0);
+    const showImmediately = heroIndex === 0;
+    heroOpacity.setValue(showImmediately ? 1 : 0);
     heroZoom.setValue(1.02);
     Animated.parallel([
-      Animated.timing(heroOpacity, { toValue: 1, duration: 900, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(heroOpacity, {
+        toValue: 1,
+        duration: showImmediately ? 0 : 900,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
       Animated.timing(heroZoom, { toValue: 1.12, duration: 7200, easing: Easing.linear, useNativeDriver: true }),
     ]).start();
     const timer = setTimeout(() => {
@@ -279,7 +312,7 @@ export default function HomeScreen() {
         setIgnoredIds(ids => [...ids.filter(id => id !== replacement.id), candidate.id]);
         setSelectedIds(ids => ids.includes(replacement.id) ? ids : [...ids, replacement.id]);
       } else {
-        openAssistantWithPrompt('请用真实可核验的北京地点替换“' + candidate.name + '”，并说明理由。');
+        setInput(current => `${current.trim()} 请用真实可核验的北京地点替换“${candidate.name}”。`.trim());
       }
     }
   };
@@ -287,7 +320,7 @@ export default function HomeScreen() {
   const handleAutoReplace = (candidate: PlannerCandidate) => {
     const replacement = plannerCandidates.find(item => item.id !== candidate.id && !autoPlanIds.includes(item.id));
     if (replacement) setAutoPlanIds(ids => ids.map(id => id === candidate.id ? replacement.id : id));
-    else openAssistantWithPrompt('请把“' + candidate.name + '”换成更符合我偏好的真实北京地点。');
+    else setInput(current => `${current.trim()} 请把“${candidate.name}”换成更符合我偏好的真实北京地点。`.trim());
   };
 
   const handlePreferenceAction = (action: 'once' | 'save' | 'edit' | 'ignore') => {
@@ -295,23 +328,46 @@ export default function HomeScreen() {
     if (action !== 'edit') setPreferenceCard(false);
   };
 
+  const createRequest = (method: PlanningInputMethod, userInput = input) => buildPlanningRequest({
+    userInput,
+    inputMethod: method,
+    mode,
+    params,
+    candidates: featured.filter(place => activePlanIds.includes(place.id)),
+  });
+
   const startPlanning = () => {
     if (planning) return;
-    if (!input.trim()) {
-      openAssistant();
-      return;
+    if (!plannerExpanded) togglePlanner();
+    void runPlanningSession(createRequest(inputMethod));
+    setInputMethod('text');
+  };
+
+  const handleAsrPress = async () => {
+    if (plannerVoice.status === 'listening') await plannerVoice.stopListening();
+    else if (plannerVoice.status !== 'transcribing') await plannerVoice.startListening();
+  };
+
+  const openRealtimePlanning = () => {
+    const request = createRequest('realtime');
+    usePlanningSessionStore.getState().beginSession(request);
+    setRealtimeVisible(true);
+  };
+
+  const finishRealtimePlanning = (transcript: Array<{ role: 'user' | 'assistant'; text: string }>) => {
+    const spokenRequest = transcript.filter(item => item.role === 'user').map(item => item.text.trim()).filter(Boolean).join('；');
+    const mergedInput = [input.trim(), spokenRequest].filter(Boolean).join('；');
+    if (mergedInput) {
+      setInput(mergedInput);
+      setSessionPreference(mergedInput);
     }
-    const candidateText = activeCandidates.length
-      ? '当前候选地点：' + activeCandidates.map(item => item.name).join('、') + '。'
-      : '请从北京真实地点中选择合适候选。';
-    const prompt = [
-      '请为我规划北京旅行：' + input.trim(),
-      '规划方式：' + PLANNER_MODE_COPY[mode].label + '。',
-      '本次参数：' + params.days + '、' + params.people + '、预算' + params.budget + '、' + params.pace + '。',
-      candidateText,
-      '请遵守我保存的偏好、过敏与安全限制，并使用真实地点、合理交通与可核验时间。',
-    ].join('\n');
-    openAssistantWithPrompt(prompt);
+    if (!plannerExpanded) togglePlanner();
+    void runPlanningSession(createRequest('realtime', mergedInput), true);
+  };
+
+  const confirmRoute = () => {
+    commitDraft();
+    navigation.navigate('LiveItinerary');
   };
 
   const chooseQuickPrompt = (prompt: string) => {
@@ -359,7 +415,7 @@ export default function HomeScreen() {
                   <Pressable onPress={navigateToNearby}><Text style={styles.desktopNavText}>发现北京</Text></Pressable>
                   <Pressable onPress={() => navigation.navigate('HotelList')}><Text style={styles.desktopNavText}>酒店</Text></Pressable>
                   <Pressable onPress={() => navigation.navigate('LivePlaces', { category: 'restaurant' })}><Text style={styles.desktopNavText}>餐饮</Text></Pressable>
-                  <Pressable onPress={() => hasRoute ? navigation.navigate('LiveItinerary') : openAssistant()}><Text style={styles.desktopNavText}>我的行程</Text></Pressable>
+                  <Pressable onPress={() => hasRoute ? navigation.navigate('LiveItinerary') : togglePlanner()}><Text style={styles.desktopNavText}>我的行程</Text></Pressable>
                 </View>
               ) : null}
               <View style={styles.headerActions}>
@@ -402,9 +458,9 @@ export default function HomeScreen() {
                 />
               </View>
               <View style={styles.composerActions}>
-                <Pressable onPress={openAssistant} style={styles.voiceOrb}>
+                <Pressable onPress={() => void handleAsrPress()} style={styles.voiceOrb}>
                   <Animated.View pointerEvents="none" style={[styles.voicePulse, { opacity: pulseOpacity, transform: [{ scale: pulseScale }] }]} />
-                  <Ionicons name="mic-outline" size={20} color="#FFF" />
+                  {plannerVoice.status === 'transcribing' ? <ActivityIndicator size="small" color="#FFF" /> : <Ionicons name={plannerVoice.status === 'listening' ? 'stop' : 'mic-outline'} size={20} color="#FFF" />}
                 </Pressable>
                 <PressScale onPress={startPlanning} disabled={planning}>
                   <LinearGradient colors={['#21C6B5', '#0A8B80']} style={styles.sendButton}>
@@ -472,9 +528,13 @@ export default function HomeScreen() {
               />
 
               <View style={styles.studioToolbar}>
-                <Pressable onPress={openAssistant} style={styles.studioVoiceButton}>
-                  <Ionicons name="mic-outline" size={17} color={C.tealDark} />
-                  <Text style={styles.studioVoiceText}>语音输入 / 实时通话</Text>
+                <Pressable onPress={() => void handleAsrPress()} style={styles.studioVoiceButton}>
+                  <Ionicons name={plannerVoice.status === 'listening' ? 'stop' : 'mic-outline'} size={17} color={C.tealDark} />
+                  <Text style={styles.studioVoiceText}>{plannerVoice.status === 'transcribing' ? '正在转写…' : plannerVoice.status === 'listening' ? '完成录音' : '语音转文字'}</Text>
+                </Pressable>
+                <Pressable onPress={openRealtimePlanning} style={styles.studioVoiceButton}>
+                  <Ionicons name="call-outline" size={17} color={C.tealDark} />
+                  <Text style={styles.studioVoiceText}>实时通话</Text>
                 </Pressable>
                 <Pressable onPress={() => setModePickerVisible(true)} style={styles.studioModeButton}>
                   <Text style={styles.studioModeText}>{PLANNER_MODE_COPY[mode].label}</Text>
@@ -524,6 +584,16 @@ export default function HomeScreen() {
             </Animated.View>
           ) : null}
 
+          {planningSession ? (
+            <PlanningWorkbench
+              session={planningSession}
+              onClarify={answerPlanningClarification}
+              onReplace={replacePlanningDraft}
+              onRetry={retryPlanningSession}
+              onCommit={confirmRoute}
+            />
+          ) : null}
+
           {showPreferenceNudge ? (
             <View style={styles.preferenceNudge}>
               <LinearGradient colors={['#0D463F', '#092F2B']} style={styles.preferenceNudgeGradient}>
@@ -543,7 +613,7 @@ export default function HomeScreen() {
 
           <Animated.View style={{ transform: [{ translateY: pageLift }] }}>
             <SectionIntro eyebrow="YOUR JOURNEY" title="这趟北京，已经开始了" subtitle={hasRoute ? '真实行程已保存，随时回到今天的路线。' : '还没有固定路线，也正好从此刻开始。'} />
-            <CurrentTripCard elderlyMode={elderlyMode} onPress={() => hasRoute ? navigation.navigate('LiveItinerary') : openAssistantWithPrompt('帮我从零开始规划一趟北京旅行。')} />
+            <CurrentTripCard elderlyMode={elderlyMode} onPress={() => hasRoute ? navigation.navigate('LiveItinerary') : togglePlanner()} />
           </Animated.View>
 
           <BeijingDiscoverySection
@@ -618,6 +688,11 @@ export default function HomeScreen() {
         onClose={() => setPreviewVisible(false)}
         onViewFull={() => { setPreviewVisible(false); startPlanning(); }}
       />
+      <RealtimeCallPanel
+        visible={realtimeVisible}
+        onClose={() => setRealtimeVisible(false)}
+        onComplete={finishRealtimePlanning}
+      />
     </SafeAreaView>
   );
 }
@@ -625,7 +700,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.bg },
   content: { paddingBottom: 0 },
-  hero: { position: 'relative', overflow: 'hidden', backgroundColor: '#062E2A' },
+  hero: { position: 'relative', overflow: 'hidden', backgroundColor: '#293230' },
   heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', resizeMode: 'cover' },
   heroOrbOne: { position: 'absolute', width: 420, height: 420, borderRadius: 210, right: -210, top: 130, backgroundColor: 'rgba(20,190,170,0.10)' },
   heroOrbTwo: { position: 'absolute', width: 260, height: 260, borderRadius: 130, left: -150, bottom: 40, backgroundColor: 'rgba(242,193,91,0.08)' },

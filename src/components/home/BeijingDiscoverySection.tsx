@@ -3,6 +3,7 @@ import { Animated, Easing, Image, Pressable, StyleSheet, Text, View } from 'reac
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import type { FliggyAttractionEditorial, TravelPlace } from '../../types/travel';
+import { FIVE_FRAMES_EDITORIAL } from '../../data/beijingEditorialAssets';
 
 interface DiscoveryCardData {
   id: string;
@@ -111,7 +112,15 @@ export default function BeijingDiscoverySection({
             <Text style={styles.gridNote}>每张图片均来自对应的 FlyAI 景点条目</Text>
           </View>
           <DynamicEditorialGrid places={editorialPlaces.slice(0, 6)} scrollY={scrollY} ambient={ambient} />
-          <SliceBridge place={editorialPlaces[0]} scrollY={scrollY} ambient={ambient} />
+          <SliceBridge
+            image={FIVE_FRAMES_EDITORIAL.image}
+            focus={FIVE_FRAMES_EDITORIAL.focus}
+            sourceLabel={FIVE_FRAMES_EDITORIAL.sourceLabel}
+            sourceWidth={FIVE_FRAMES_EDITORIAL.sourceWidth}
+            sourceHeight={FIVE_FRAMES_EDITORIAL.sourceHeight}
+            scrollY={scrollY}
+            ambient={ambient}
+          />
         </>
       ) : null}
     </View>
@@ -242,15 +251,31 @@ function DynamicEditorialGrid({ places, scrollY, ambient }: {
   );
 }
 
-function SliceBridge({ place, scrollY, ambient }: {
-  place: FliggyAttractionEditorial;
+type ImageFocus = { x: number; y: number };
+
+function SliceBridge({ image, focus, sourceLabel, sourceWidth, sourceHeight, scrollY, ambient }: {
+  image: number;
+  focus: ImageFocus;
+  sourceLabel: string;
+  sourceWidth: number;
+  sourceHeight: number;
   scrollY: Animated.Value;
   ambient: Animated.Value;
 }) {
-  const [frameWidth, setFrameWidth] = useState(0);
+  const [frameLayout, setFrameLayout] = useState({ width: 0, height: 0 });
+  const frameWidth = frameLayout.width;
   const panelCount = 5;
   const panelGap = 3;
   const panelWidth = frameWidth / panelCount;
+  // 与 styles.slice 的 top/bottom 内边距保持一致
+  const panelInset = 12;
+  const panelHeight = Math.max(0, frameLayout.height - panelInset * 2);
+  // 图片按宽度等比缩放后的高度；不足盖满面板时改按面板高度铺满
+  const scaledHeight = frameWidth > 0 ? frameWidth * (sourceHeight / sourceWidth) : 0;
+  const pieceHeight = Math.max(panelHeight, scaledHeight);
+  // 垂直裁切焦点：让 focus.y 对齐面板视觉中心，并收敛到不露底色的范围
+  const rawPieceTop = panelHeight / 2 - focus.y * pieceHeight;
+  const pieceTop = Math.min(0, Math.max(panelHeight - pieceHeight, rawPieceTop));
   const floatRanges = [
     [-10, 6],
     [7, -8],
@@ -273,12 +298,15 @@ function SliceBridge({ place, scrollY, ambient }: {
         </View>
         <View style={styles.sliceMeta}>
           <Text style={styles.sliceFrameLabel}>ONE PHOTO · FIVE FRAMES</Text>
-          <Text style={styles.sliceSource}>FLYAI · {place.name}</Text>
+          <Text style={styles.sliceSource}>{sourceLabel}</Text>
         </View>
       </View>
       <View
         style={styles.sliceImage}
-        onLayout={event => setFrameWidth(event.nativeEvent.layout.width)}
+        onLayout={event => setFrameLayout({
+          width: event.nativeEvent.layout.width,
+          height: event.nativeEvent.layout.height,
+        })}
       >
         {frameWidth > 0 ? (
           <Animated.View style={[StyleSheet.absoluteFillObject, { transform: [{ scale: groupScale }] }]}>
@@ -304,10 +332,13 @@ function SliceBridge({ place, scrollY, ambient }: {
                   }]}
                 >
                   <Image
-                    source={{ uri: place.imageUrl }}
+                    source={image}
+                    resizeMode="cover"
                     style={[styles.slicePiece, {
                       left: -panelLeft,
                       width: frameWidth,
+                      height: pieceHeight,
+                      top: pieceTop,
                     }]}
                   />
                   <View pointerEvents="none" style={styles.sliceInnerLight} />
@@ -316,7 +347,7 @@ function SliceBridge({ place, scrollY, ambient }: {
             })}
           </Animated.View>
         ) : (
-          <Image source={{ uri: place.imageUrl }} style={StyleSheet.absoluteFillObject} />
+          <Image source={image} resizeMode="cover" style={StyleSheet.absoluteFillObject} />
         )}
         <Animated.View pointerEvents="none" style={[styles.sliceSheen, { transform: [{ translateX: sheenX }, { rotate: '12deg' }] }]}>
           <LinearGradient

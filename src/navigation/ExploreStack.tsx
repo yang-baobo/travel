@@ -1,7 +1,7 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ExploreStackParamList } from '../types';
-import { colors } from '../theme/colors';
+import { flowStackScreenOptions } from '../theme/navigationTheme';
 import HomeScreen from '../screens/explore/HomeScreen';
 import ExploreMainScreen from '../screens/explore/ExploreMainScreen';
 import PreferenceScreen from '../screens/explore/PreferenceScreen';
@@ -27,12 +27,7 @@ const Stack = createNativeStackNavigator<ExploreStackParamList>();
 export default function ExploreStack() {
   return (
     <Stack.Navigator
-      screenOptions={{
-        headerStyle: { backgroundColor: colors.surface },
-        headerTintColor: colors.primary,
-        headerTitleStyle: { color: colors.textPrimary, fontWeight: '600' },
-        headerShadowVisible: false,
-      }}
+      screenOptions={flowStackScreenOptions}
     >
       <Stack.Screen
         name="Home"

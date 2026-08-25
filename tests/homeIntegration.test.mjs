@@ -6,10 +6,13 @@ const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'
 
 const home = read('src/screens/explore/HomeScreen.tsx');
 const discovery = read('src/components/home/BeijingDiscoverySection.tsx');
+const editorialAssets = read('src/data/beijingEditorialAssets.ts');
 const tripCard = read('src/components/home/CurrentTripCard.tsx');
 const modeSelector = read('src/components/home/PlannerModeSelector.tsx');
-const store = read('src/store/useAssistantStore.ts');
-const fullPanel = read('src/components/assistant/FullPanelChat.tsx');
+const planningStore = read('src/store/usePlanningSessionStore.ts');
+const planningService = read('src/services/planningSessionService.ts');
+const planningBuilder = read('src/services/planningRequestBuilder.ts');
+const workbench = read('src/components/home/PlanningWorkbench.tsx');
 
 test('home contains no empty press handlers or old mock planning', () => {
   assert.doesNotMatch(home, /onPress=\{\(\) => \{\}\}/);
@@ -31,13 +34,15 @@ test('quick services and real place details are navigable', () => {
   assert.match(home, /navigate\('LivePlaceDetail', \{ placeId: place\.id \}\)/);
 });
 
-test('home planning prompt is handed to the real assistant pipeline', () => {
-  assert.match(home, /openAssistantWithPrompt\(prompt\)/);
-  assert.match(store, /openAssistantWithPrompt: \(prompt: string\) => void/);
-  assert.match(store, /consumePendingPrompt: \(\) => string \| null/);
-  assert.match(fullPanel, /const prompt = consumePendingPrompt\(\)/);
-  assert.match(fullPanel, /handleSendMessage\(prompt\)/);
-  assert.match(fullPanel, /chatService\.sendMessage\(text\.trim\(\), phase\)/);
+test('home planning input is handed to the structured Planning Session pipeline', () => {
+  assert.match(home, /buildPlanningRequest\(/);
+  assert.match(home, /runPlanningSession\(/);
+  assert.match(planningBuilder, /candidates: input\.candidates\.map\(toPlanningCandidate\)/);
+  assert.match(planningStore, /beginSession: \(request: PlanningRequest\) => string/);
+  assert.match(planningService, /planningOrchestrator\.plan\(/);
+  assert.match(planningService, /export function commitDraft\(\): string/);
+  assert.match(workbench, /testID="home-planning-workbench"/);
+  assert.doesNotMatch(home, /openAssistantWithPrompt|openAssistant\(/);
 });
 
 test('planner mode selector is controlled and not permanently visible', () => {
@@ -71,4 +76,27 @@ test('five-frame image uses one responsive source crop', () => {
   assert.match(discovery, /width: frameWidth/);
   assert.match(discovery, /Animated\.add\(scrollStagger, floatY\)/);
   assert.doesNotMatch(discovery, /width: 560|left: \x60\$\{-index \* 25\}%\x60/);
+});
+
+
+test('hero paints a verified Beijing image immediately without a green loading flash', () => {
+  assert.match(editorialAssets, /FLYAI_WUMEN_EDITORIAL/);
+  assert.match(editorialAssets, /name: '午门'/);
+  assert.match(editorialAssets, /img\.alicdn\.com/);
+  assert.match(home, /new Animated\.Value\(1\)/);
+  assert.match(home, /\[FLYAI_WUMEN_EDITORIAL\.imageUrl, \.\.\.fliggyImages, \.\.\.amapImages\]/);
+  assert.match(home, /duration: showImmediately \? 0 : 900/);
+  assert.doesNotMatch(home, /hero: \{[^\n]*backgroundColor: '#062E2A'/);
+});
+
+test('floating five-frame composition uses the user-selected local image and focus', () => {
+  assert.match(editorialAssets, /FIVE_FRAMES_EDITORIAL/);
+  assert.match(editorialAssets, /beijing-five-frames\.jpg/);
+  assert.match(editorialAssets, /sourceLabel: 'USER SELECTED · BEIJING'/);
+  assert.match(discovery, /image=\{FIVE_FRAMES_EDITORIAL\.image\}/);
+  assert.match(discovery, /focus=\{FIVE_FRAMES_EDITORIAL\.focus\}/);
+  assert.match(discovery, /sourceLabel=\{FIVE_FRAMES_EDITORIAL\.sourceLabel\}/);
+  // 焦点通过手动计算裁切偏移实现（RN 的 ImageStyle 不支持 objectPosition）
+  assert.match(discovery, /rawPieceTop = panelHeight \/ 2 - focus\.y \* pieceHeight/);
+  assert.match(discovery, /sourceWidth=\{FIVE_FRAMES_EDITORIAL\.sourceWidth\}/);
 });

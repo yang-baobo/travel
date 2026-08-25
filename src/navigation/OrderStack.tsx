@@ -1,7 +1,7 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { OrderStackParamList } from '../types';
-import { colors } from '../theme/colors';
+import { flowStackScreenOptions } from '../theme/navigationTheme';
 import OrderListScreen from '../screens/orders/OrderListScreen';
 import OrderDetailScreen from '../screens/orders/OrderDetailScreen';
 import AttractionDetailScreen from '../screens/explore/AttractionDetailScreen';
@@ -15,12 +15,7 @@ const Stack = createNativeStackNavigator<OrderStackParamList>();
 export default function OrderStack() {
   return (
     <Stack.Navigator
-      screenOptions={{
-        headerStyle: { backgroundColor: colors.surface },
-        headerTintColor: colors.primary,
-        headerTitleStyle: { color: colors.textPrimary, fontWeight: '600' },
-        headerShadowVisible: false,
-      }}
+      screenOptions={flowStackScreenOptions}
     >
       <Stack.Screen
         name="OrderList"

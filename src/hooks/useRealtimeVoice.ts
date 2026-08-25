@@ -4,6 +4,7 @@ import { getRealtimeWebSocketUrl } from '../services/aiService';
 import { buildAssistantContext } from '../utils/assistantContext';
 import { float32ToPcm16Base64 } from '../utils/audioEncoding';
 import { RealtimePcmPlayer } from '../utils/realtimePcmPlayer';
+import { usePlanningSessionStore } from '../store/usePlanningSessionStore';
 
 export type RealtimeVoiceStatus =
   | 'idle'
@@ -121,7 +122,29 @@ export function useRealtimeVoice(): RealtimeVoiceSession {
     socketRef.current = socket;
 
     socket.onopen = () => {
-      socket.send(JSON.stringify({ type: 'client.configure', context: buildAssistantContext() }));
+      const planning = usePlanningSessionStore.getState().session;
+      socket.send(JSON.stringify({
+        type: 'client.configure',
+        context: {
+          ...buildAssistantContext(),
+          planning_session: planning ? {
+            id: planning.id,
+            status: planning.status,
+            request: {
+              ...planning.request,
+              candidates: planning.request.candidates.map(candidate => ({
+                source: candidate.source,
+                sourceId: candidate.sourceId,
+                name: candidate.name,
+                category: candidate.category,
+                latitude: candidate.latitude,
+                longitude: candidate.longitude,
+              })),
+            },
+            messages: planning.messages.slice(-20),
+          } : null,
+        },
+      }));
     };
 
     socket.onmessage = async message => {
@@ -160,6 +183,11 @@ export function useRealtimeVoice(): RealtimeVoiceSession {
         return;
       }
       if (event.type === 'conversation.item.input_audio_transcription.completed' && event.transcript) {
+        usePlanningSessionStore.getState().addMessage({
+          role: 'user',
+          text: String(event.transcript),
+          inputMethod: 'realtime',
+        });
         setTranscript(items => [...items, {
           id: event.item_id || `user-${Date.now()}`,
           role: 'user',
@@ -179,6 +207,7 @@ export function useRealtimeVoice(): RealtimeVoiceSession {
       if (event.type === 'response.audio_transcript.done') {
         const text = String(event.transcript || assistantDraft).trim();
         if (text) {
+          usePlanningSessionStore.getState().addMessage({ role: 'assistant', text });
           setTranscript(items => [...items, {
             id: event.item_id || `assistant-${Date.now()}`,
             role: 'assistant',

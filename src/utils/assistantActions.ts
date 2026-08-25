@@ -78,8 +78,9 @@ export function executeActions(actions: AIAction[]): AIAction[] {
           }
           break;
 
+        case 'set_hotel_zone':
         case 'set_hotel_zone_pref':
-          if (['any', 'nanshan', 'futian', 'luohu', 'baoan', 'longgang', 'yantian'].includes(action.value)) {
+          if (['any', 'city_center', 'near_attraction', 'near_shopping', 'near_food_street', 'quiet_area', 'near_metro'].includes(action.value)) {
             prefStore.setHotelZonePref(action.value as HotelZonePreference);
           }
           break;

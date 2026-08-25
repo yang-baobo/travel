@@ -1,7 +1,7 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { CustomStackParamList } from '../types';
-import { colors } from '../theme/colors';
+import { flowStackScreenOptions } from '../theme/navigationTheme';
 import LiveItineraryScreen from '../screens/explore/LiveItineraryScreen';
 import LivePlacesScreen from '../screens/explore/LivePlacesScreen';
 import LivePlaceDetailScreen from '../screens/explore/LivePlaceDetailScreen';
@@ -18,12 +18,7 @@ const Stack = createNativeStackNavigator<CustomStackParamList>();
 export default function CustomStack() {
   return (
     <Stack.Navigator
-      screenOptions={{
-        headerStyle: { backgroundColor: colors.surface },
-        headerTintColor: colors.primary,
-        headerTitleStyle: { color: colors.textPrimary, fontWeight: '600' },
-        headerShadowVisible: false,
-      }}
+      screenOptions={flowStackScreenOptions}
     >
       <Stack.Screen
         name="CustomHome"

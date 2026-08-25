@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { colors } from '../../theme/colors';
 import { useRouteStore } from '../../store/useRouteStore';
 import { usePreferenceStore } from '../../store/usePreferenceStore';
+import { useTripStore } from '../../store/useTripStore';
 
 function EmptyTripJourney({ scale, onPress }: { scale: number; onPress: () => void }) {
   const progress = useRef(new Animated.Value(0)).current;
@@ -66,6 +67,7 @@ function EmptyTripJourney({ scale, onPress }: { scale: number; onPress: () => vo
 }
 
 export default function CurrentTripCard({ elderlyMode, onPress }: { elderlyMode: boolean; onPress: () => void }) {
+  const currentTrip = useTripStore(state => state.currentTrip);
   const routeStops = useRouteStore(state => state.routeStops);
   const travelDays = useRouteStore(state => state.travelDays);
   const currentRouteId = useRouteStore(state => state.currentRouteId);
@@ -74,21 +76,27 @@ export default function CurrentTripCard({ elderlyMode, onPress }: { elderlyMode:
   const preferenceGroupSize = usePreferenceStore(state => state.groupSize);
 
   const scale = elderlyMode ? 1.12 : 1;
-  const hasTrip = routeStops.length > 0 || currentRouteId !== null;
+  const hasTrip = Boolean(currentTrip) || routeStops.length > 0 || currentRouteId !== null;
 
   if (!hasTrip) {
     return <EmptyTripJourney scale={scale} onPress={onPress} />;
   }
 
-  const stopCount = routeStops.length;
-  const sourceLabel = routeSource === 'guide' ? '导游路线' : routeSource === 'system' ? '推荐路线' : '自定义路线';
+  const stopCount = currentTrip
+    ? currentTrip.days.reduce((sum, day) => sum + day.stops.length, 0)
+    : routeStops.length;
+  const displayDays = currentTrip?.request.days || travelDays || preferenceTravelDays;
+  const displayPeople = currentTrip?.request.people || preferenceGroupSize;
+  const sourceLabel = currentTrip
+    ? 'AI 真实路线'
+    : routeSource === 'guide' ? '导游路线' : routeSource === 'system' ? '推荐路线' : '自定义路线';
 
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
       <View style={styles.header}>
         <View>
           <Text style={[styles.kicker, { fontSize: 10 * scale }]}>
-            北京 · {travelDays || preferenceTravelDays}天{Math.max(0, (travelDays || preferenceTravelDays) - 1)}晚
+            北京 · {displayDays}天{Math.max(0, displayDays - 1)}晚
           </Text>
           <Text style={[styles.day, { fontSize: 24 * scale }]}>
             {sourceLabel}
@@ -107,12 +115,12 @@ export default function CurrentTripCard({ elderlyMode, onPress }: { elderlyMode:
         <View style={styles.stat}>
           <Ionicons name="people-outline" size={17} color={colors.primary} />
           <Text style={styles.statLabel}>出行人数</Text>
-          <Text style={[styles.statValue, { fontSize: 13 * scale }]}>{preferenceGroupSize}人</Text>
+          <Text style={[styles.statValue, { fontSize: 13 * scale }]}>{displayPeople}人</Text>
         </View>
         <View style={styles.stat}>
           <Ionicons name="calendar-outline" size={17} color={colors.primary} />
           <Text style={styles.statLabel}>旅行天数</Text>
-          <Text style={[styles.statValue, { fontSize: 13 * scale }]}>{travelDays || preferenceTravelDays}天</Text>
+          <Text style={[styles.statValue, { fontSize: 13 * scale }]}>{displayDays}天</Text>
         </View>
       </View>
     </Pressable>

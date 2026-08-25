@@ -18,14 +18,12 @@ import {
   KeyboardAvoidingView,
   Dimensions,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
 import { typography } from '../../theme/typography';
 import { useElderlyMode } from '../../theme/ElderlyModeContext';
 import { chatService } from '../../utils/chatService';
 import { executeActions } from '../../utils/assistantActions';
-import { generateRoute } from '../../utils/routeGenerator';
 import { useAssistantStore, ChatBubble } from '../../store/useAssistantStore';
 import { voiceService } from '../../utils/voiceService';
 import { VoiceEngine } from '../../hooks/useVoiceEngine';
@@ -39,7 +37,6 @@ interface Props {
 
 export default function FullPanelChat({ voiceEngine }: Props) {
   const { isElderlyMode, scaleIcon } = useElderlyMode();
-  const navigation = useNavigation<any>();
 
   // Store state
   const messages = useAssistantStore((s) => s.messages);
@@ -52,8 +49,6 @@ export default function FullPanelChat({ voiceEngine }: Props) {
     setIsProcessing,
     closeAssistant,
     setPhase,
-    setRouteSummary,
-    setRoutePresentationText,
   } = useAssistantStore.getState();
 
   // Local UI state
@@ -147,8 +142,12 @@ export default function FullPanelChat({ voiceEngine }: Props) {
     setIsProcessing(true);
 
     try {
-      const response = await chatService.sendMessage(text.trim(), phase);
-      const navigationActions = executeActions(response.actions);
+      const response = await chatService.sendMessage(
+        text.trim(),
+        phase,
+        messages.map(message => ({ role: message.role, content: message.text })),
+      );
+      executeActions(response.actions);
 
       const assistantBubble: ChatBubble = {
         id: `msg-${Date.now() + 1}`,
@@ -161,20 +160,14 @@ export default function FullPanelChat({ voiceEngine }: Props) {
       // 检查是否需要生成路线
       const hasGenerateRoute = response.actions.some(a => a.type === 'generate_route') ||
                                response.stage === 'generating';
-      const hasNavigateToRoute = navigationActions.some(a => a.type === 'navigate_to_route_plan');
-
       if (hasGenerateRoute) {
-        // 生成路线
-        setPhase('generating');
-        const selectedIds = response.actions
-          .find(a => a.type === 'select_attractions')?.value as string[] | undefined;
-        const summary = generateRoute(selectedIds);
-        setRouteSummary(summary);
-        setRoutePresentationText(summary.summaryText);
-
-        // 切换到悬浮模式并跳转
-        setPhase('presenting');
-        navigation.navigate('CustomTab', { screen: 'RoutePlan' });
+        setPhase('collecting');
+        addMessage({
+          id: `msg-${Date.now() + 2}`,
+          role: 'assistant',
+          text: '路线生成已统一到首页的北京路线工作台。请回到首页确认结构化条件后生成真实草稿。',
+          timestamp: Date.now(),
+        });
       }
     } catch (error) {
       console.error('Send message error:', error);
@@ -188,9 +181,9 @@ export default function FullPanelChat({ voiceEngine }: Props) {
     } finally {
       setIsProcessing(false);
     }
-  }, [navigation, speakText]);
+  }, [messages, phase, speakText]);
 
-  // 首页携带的规划需求也必须走与手动发送相同的 GLM 请求链路。
+  // Legacy 入口仍可携带普通助手提示；首页规划已使用 Planning Session。
   useEffect(() => {
     if (!pendingPrompt) return;
     const prompt = consumePendingPrompt();
@@ -226,8 +219,11 @@ export default function FullPanelChat({ voiceEngine }: Props) {
           {/* 顶部栏 */}
           <View style={styles.panelHeader}>
             <View style={styles.headerLeft}>
-              <Text style={{ fontSize: 22 }}>🐱</Text>
-              <Text style={[typography.h3, { marginLeft: 8 }]}>小猫助手</Text>
+              <View style={styles.headerMark}><Ionicons name="sparkles" size={18} color="#FFFFFF" /></View>
+              <View>
+                <Text style={styles.headerTitle}>北京 AI 旅伴</Text>
+                <Text style={styles.headerSubtitle}>把时间、预算和偏好告诉我</Text>
+              </View>
             </View>
             <View style={styles.headerRight}>
               <TouchableOpacity style={styles.modeToggleActive} onPress={() => setIsRealtimeCallVisible(true)}>
@@ -239,7 +235,7 @@ export default function FullPanelChat({ voiceEngine }: Props) {
                 <Text style={[typography.caption, { marginLeft: 4, color: '#fff' }]}>语音通话</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={handleClose} style={styles.closeBtn}>
-                <Ionicons name="close" size={scaleIcon(24)} color={colors.textSecondary} />
+                <Ionicons name="close" size={scaleIcon(24)} color="rgba(255,255,255,0.76)" />
               </TouchableOpacity>
             </View>
           </View>
@@ -282,7 +278,7 @@ export default function FullPanelChat({ voiceEngine }: Props) {
                   ]}
                 >
                   {msg.role === 'assistant' && (
-                    <Text style={styles.bubbleAvatar}>🐱</Text>
+                    <View style={styles.bubbleAvatar}><Ionicons name="sparkles" size={14} color="#FFFFFF" /></View>
                   )}
                   <View style={[
                     styles.bubbleContent,
@@ -320,7 +316,7 @@ export default function FullPanelChat({ voiceEngine }: Props) {
               {/* 处理中指示 */}
               {isProcessing && (
                 <View style={[styles.bubble, styles.bubbleAssistant]}>
-                  <Text style={styles.bubbleAvatar}>🐱</Text>
+                  <View style={styles.bubbleAvatar}><Ionicons name="sparkles" size={14} color="#FFFFFF" /></View>
                   <View style={[styles.bubbleContent, styles.bubbleContentAssistant]}>
                     <Text style={[typography.body, styles.bubbleTextAssistant]}>
                       {phase === 'generating' ? '正在帮您规划路线...' : '正在思考...'}
@@ -372,79 +368,46 @@ export default function FullPanelChat({ voiceEngine }: Props) {
 }
 
 const styles = StyleSheet.create({
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(4,24,22,0.48)', justifyContent: 'flex-end' },
   panel: {
-    height: SCREEN_HEIGHT * 0.78,
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    overflow: 'hidden',
+    height: SCREEN_HEIGHT * 0.82, backgroundColor: '#F3F7F5', borderTopLeftRadius: 30,
+    borderTopRightRadius: 30, overflow: 'hidden', borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.35)',
   },
-  panelHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  headerLeft: { flexDirection: 'row', alignItems: 'center' },
+  panelHeader: { minHeight: 78, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 15, paddingBottom: 13, backgroundColor: '#0D463F' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerMark: { width: 42, height: 42, borderRadius: 15, backgroundColor: '#0E9F93', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.26)' },
+  headerTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '900', letterSpacing: 0.2 },
+  headerSubtitle: { color: 'rgba(255,255,255,0.56)', fontSize: 10, marginTop: 3 },
   modeToggle: { flexDirection: 'row', alignItems: 'center' },
-  modeToggleActive: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11, paddingVertical: 7,
-    borderRadius: 16, backgroundColor: colors.primary,
-  },
-  closeBtn: { padding: 4 },
-  statusBar: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 20, paddingVertical: 6, backgroundColor: '#FAFAFA',
-  },
-  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#ccc' },
-  statusDotListening: { backgroundColor: '#4CAF50' },
-  statusDotSpeaking: { backgroundColor: '#FF9800' },
-  statusDotError: { backgroundColor: '#E53935' },
+  modeToggleActive: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 17, backgroundColor: '#D8A33B' },
+  closeBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center' },
+  statusBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#EAF7F4' },
+  statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#AAB8B4' },
+  statusDotListening: { backgroundColor: '#0E9F93' },
+  statusDotSpeaking: { backgroundColor: '#D8A33B' },
+  statusDotError: { backgroundColor: '#D65B55' },
   chatArea: { flex: 1 },
-  chatContent: { padding: 16, paddingBottom: 8 },
-  bubble: { flexDirection: 'row', marginBottom: 12, alignItems: 'flex-start' },
+  chatContent: { padding: 18, paddingBottom: 10 },
+  bubble: { flexDirection: 'row', marginBottom: 14, alignItems: 'flex-start' },
   bubbleUser: { justifyContent: 'flex-end' },
   bubbleAssistant: { justifyContent: 'flex-start' },
-  bubbleAvatar: { fontSize: 20, marginRight: 8, marginTop: 4 },
-  bubbleContent: {
-    maxWidth: '75%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16,
-  },
-  bubbleContentUser: { backgroundColor: colors.primary, borderBottomRightRadius: 4 },
-  bubbleContentAssistant: { backgroundColor: '#F5F5F5', borderBottomLeftRadius: 4 },
-  bubbleTextUser: { color: '#fff' },
-  bubbleTextAssistant: { color: '#333' },
-  replayBtn: { marginTop: 6, alignSelf: 'flex-start', padding: 2 },
-  inputArea: {
-    borderTopWidth: 1, borderTopColor: '#F0F0F0',
-    paddingVertical: 12, paddingHorizontal: 16, backgroundColor: '#fff',
-  },
+  bubbleAvatar: { width: 30, height: 30, borderRadius: 11, marginRight: 8, marginTop: 3, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0E9F93' },
+  bubbleContent: { maxWidth: '78%', paddingHorizontal: 15, paddingVertical: 11, borderRadius: 18 },
+  bubbleContentUser: { backgroundColor: '#0E9F93', borderBottomRightRadius: 5 },
+  bubbleContentAssistant: { backgroundColor: '#FFFFFF', borderBottomLeftRadius: 5, borderWidth: 1, borderColor: '#E1EAE7' },
+  bubbleTextUser: { color: '#FFFFFF' },
+  bubbleTextAssistant: { color: '#0F2B27' },
+  replayBtn: { marginTop: 7, alignSelf: 'flex-start', padding: 2 },
+  inputArea: { borderTopWidth: 1, borderTopColor: '#DDE7E4', paddingVertical: 13, paddingHorizontal: 16, backgroundColor: '#FFFFFF' },
   phoneModeInput: { alignItems: 'center', paddingVertical: 8 },
-  listeningIndicator: {
-    width: 64, height: 64, borderRadius: 32,
-    backgroundColor: '#E8F5E9', justifyContent: 'center', alignItems: 'center',
-  },
-  speakingIndicator: { backgroundColor: '#FFF3E0' },
+  listeningIndicator: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#E6F5F1', justifyContent: 'center', alignItems: 'center' },
+  speakingIndicator: { backgroundColor: '#FFF8E7' },
   textModeInput: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  textInput: {
-    flex: 1, backgroundColor: '#F5F5F5', borderRadius: 20,
-    paddingHorizontal: 16, paddingVertical: 10, maxHeight: 100,
-  },
-  micSmallBtn: { padding: 8 },
-  micSmallBtnActive: { backgroundColor: '#FFEBEE', borderRadius: 20 },
-  asrHint: { fontSize: 12, color: colors.textSecondary, marginTop: 7, marginLeft: 8 },
-  sendBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center',
-  },
-  sendBtnDisabled: { opacity: 0.5 },
+  textInput: { flex: 1, backgroundColor: '#F0F5F3', borderRadius: 22, paddingHorizontal: 17, paddingVertical: 11, maxHeight: 100, color: '#0F2B27' },
+  micSmallBtn: { width: 42, height: 42, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EFF5F3' },
+  micSmallBtnActive: { backgroundColor: '#FFF1F2' },
+  asrHint: { fontSize: 12, color: '#617571', marginTop: 7, marginLeft: 8 },
+  sendBtn: { width: 42, height: 42, borderRadius: 16, backgroundColor: '#0E9F93', justifyContent: 'center', alignItems: 'center' },
+  sendBtnDisabled: { opacity: 0.45 },
 });

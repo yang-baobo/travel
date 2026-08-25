@@ -1,5 +1,5 @@
 /**
- * VoiceAssistant — 小猫助手语音对话组件
+ * @legacy VoiceAssistant — 未挂载的历史语音对话组件。
  * 悬浮按钮 + 对话面板 + STT/TTS 电话模式
  * 支持导航到路线页面、打开选择器等操作
  * 
@@ -29,7 +29,6 @@ import { useElderlyMode } from '../theme/ElderlyModeContext';
 import { voiceService } from '../utils/voiceService';
 import { chatService, AIResponse } from '../utils/chatService';
 import { executeActions } from '../utils/assistantActions';
-import { generateRoute, RouteSummary, getRouteSummaryText } from '../utils/routeGenerator';
 import { useAssistantActionStore } from '../store/useAssistantActionStore';
 import {
   ExpoSpeechRecognitionModule,
@@ -63,7 +62,6 @@ export default function VoiceAssistant() {
   const [status, setStatus] = useState<'idle' | 'listening' | 'speaking' | 'error'>('idle');
   const [interimText, setInterimText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [routeSummary, setRouteSummary] = useState<RouteSummary | null>(null);
   const [stage, setStage] = useState<'collecting' | 'generating' | 'confirming' | 'speaking' | 'adjusting' | 'done'>('collecting');
 
   const scrollViewRef = useRef<ScrollView>(null);
@@ -370,9 +368,9 @@ export default function VoiceAssistant() {
       switch (action.type) {
         case 'navigate_to_route_plan':
           handleClose();
-          setTimeout(() => {
-            navigation.navigate('CustomTab', { screen: 'RoutePlan' });
-          }, 300);
+          assistantActionStore.dispatchAction('none', {
+            message: '路线生成已迁移到首页 Planning Session。',
+          });
           break;
 
         case 'navigate_to_home':
@@ -433,7 +431,11 @@ export default function VoiceAssistant() {
     setIsProcessing(true);
 
     try {
-      const response = await chatService.sendMessage(text.trim());
+      const response = await chatService.sendMessage(
+        text.trim(),
+        stage,
+        messages.map(message => ({ role: message.role, content: message.text })),
+      );
 
       // 执行 actions，返回需要 VoiceAssistant 处理的导航类动作
       const navigationActions = executeActions(response.actions);
@@ -449,30 +451,15 @@ export default function VoiceAssistant() {
 
       // 处理路线生成
       if (response.stage === 'generating' || response.actions.some(a => a.type === 'generate_route')) {
-        const selectedIds = response.actions
-          .find(a => a.type === 'select_attractions')?.value as string[] | undefined;
-        const summary = generateRoute(selectedIds);
-        setRouteSummary(summary);
-
-        // 朗读 AI 回复 + 行程摘要
-        const fullText = response.reply + '。' + summary.summaryText;
-        await speakAndListen(fullText);
-
-        // 处理导航到路线页面
-        const navAction = navigationActions.find(a => a.type === 'navigate_to_route_plan');
-        if (navAction) {
-          // 关闭对话面板，跳转到路线页面
-          handleClose();
-          setTimeout(() => {
-            navigation.navigate('CustomTab', { screen: 'RoutePlan' });
-            // 派发动作，让 RoutePlanScreen 知道要朗读摘要
-            assistantActionStore.dispatchAction('speak_route_summary', {
-              text: summary.summaryText,
-            });
-          }, 300);
-        } else {
-          setStage('confirming');
-        }
+        setStage('collecting');
+        const redirectText = '路线生成已经统一到首页的北京路线工作台，请在那里确认结构化条件和真实草稿。';
+        setMessages(prev => [...prev, {
+          id: `msg-${Date.now() + 2}`,
+          role: 'assistant',
+          text: redirectText,
+          timestamp: Date.now(),
+        }]);
+        await speakAndListen(redirectText);
       } else {
         // 朗读 AI 回复
         await speakAndListen(response.reply);
@@ -525,35 +512,6 @@ export default function VoiceAssistant() {
       await startListening();
     }
   }, [status, handleSendMessage, clearSilenceTimer, startListening, stopListening]);
-
-  // 路线确认
-  const handleConfirmRoute = useCallback(async () => {
-    setStage('done');
-    const confirmText = '好的！路线已经帮您安排好啦，祝您旅途愉快！';
-    const confirmBubble: ChatBubble = {
-      id: `msg-${Date.now()}`,
-      role: 'assistant',
-      text: confirmText,
-      timestamp: Date.now(),
-    };
-    setMessages(prev => [...prev, confirmBubble]);
-    await speakAndListen(confirmText);
-  }, [speakAndListen]);
-
-  // 重新生成
-  const handleRegenerate = useCallback(async () => {
-    setStage('collecting');
-    setRouteSummary(null);
-    const regenText = '好的，那我帮您重新安排，您还有什么想法吗？';
-    const regenBubble: ChatBubble = {
-      id: `msg-${Date.now()}`,
-      role: 'assistant',
-      text: regenText,
-      timestamp: Date.now(),
-    };
-    setMessages(prev => [...prev, regenBubble]);
-    await speakAndListen(regenText);
-  }, [speakAndListen]);
 
   // 切换电话模式
   const handleTogglePhoneMode = useCallback(async () => {
@@ -745,64 +703,6 @@ export default function VoiceAssistant() {
                       <Text style={[typography.body, styles.bubbleTextAssistant]}>
                         正在思考...
                       </Text>
-                    </View>
-                  </View>
-                )}
-
-                {/* 路线确认卡片 */}
-                {stage === 'confirming' && routeSummary && (
-                  <View style={styles.confirmCard}>
-                    <Text style={[typography.h3, { marginBottom: 8 }]}>行程安排</Text>
-                    {routeSummary.days.map((day) => (
-                      <View key={day.day} style={styles.dayBlock}>
-                        <Text style={[typography.body, { fontWeight: '600' }]}>
-                          第{day.day}天
-                        </Text>
-                        {day.attractions.map((a) => (
-                          <Text key={a.id} style={typography.bodySmall}>
-                            {a.time} {a.name}（{a.duration}小时）
-                          </Text>
-                        ))}
-                        {day.lunch && (
-                          <Text style={[typography.bodySmall, { color: '#E65100' }]}>
-                            午餐：{day.lunch.name}
-                          </Text>
-                        )}
-                        {day.dinner && (
-                          <Text style={[typography.bodySmall, { color: '#E65100' }]}>
-                            晚餐：{day.dinner.name}
-                          </Text>
-                        )}
-                      </View>
-                    ))}
-                    {routeSummary.hotel && (
-                      <Text style={[typography.bodySmall, { marginTop: 4 }]}>
-                        住宿：{routeSummary.hotel.name}（{routeSummary.hotel.pricePerNight}元/晚）
-                      </Text>
-                    )}
-                    <Text style={[typography.body, { fontWeight: '600', marginTop: 8 }]}>
-                      预计总费用：约{routeSummary.totalEstimatedCost}元
-                    </Text>
-
-                    <View style={styles.confirmButtons}>
-                      <TouchableOpacity
-                        style={[styles.confirmBtn, styles.confirmBtnPrimary]}
-                        onPress={handleConfirmRoute}
-                      >
-                        <Ionicons name="checkmark-circle" size={scaleIcon(20)} color="#fff" />
-                        <Text style={[typography.button, { color: '#fff', marginLeft: 6 }]}>
-                          好的，就这样
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.confirmBtn, styles.confirmBtnSecondary]}
-                        onPress={handleRegenerate}
-                      >
-                        <Ionicons name="refresh" size={scaleIcon(20)} color={colors.primary} />
-                        <Text style={[typography.button, { color: colors.primary, marginLeft: 6 }]}>
-                          帮我换一个
-                        </Text>
-                      </TouchableOpacity>
                     </View>
                   </View>
                 )}

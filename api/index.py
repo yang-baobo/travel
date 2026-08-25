@@ -22,8 +22,10 @@ try:
         AIConfigurationError,
         AIUpstreamError,
         ASRRequest,
+        PlanningIntentRequest,
         ai_provider_status,
         chat_with_glm,
+        planning_intent_with_glm,
         proxy_stepfun_realtime,
         transcribe_with_stepfun,
     )
@@ -54,8 +56,10 @@ except ImportError:  # Vercel can load this module without a package context.
         AIConfigurationError,
         AIUpstreamError,
         ASRRequest,
+        PlanningIntentRequest,
         ai_provider_status,
         chat_with_glm,
+        planning_intent_with_glm,
         proxy_stepfun_realtime,
         transcribe_with_stepfun,
     )
@@ -367,6 +371,16 @@ def ai_chat(payload: AIChatRequest) -> dict:
         raise HTTPException(status_code=503, detail={"code": "AI_NOT_CONFIGURED", "message": str(exc)}) from exc
     except AIUpstreamError as exc:
         raise HTTPException(status_code=502, detail={"code": "AI_UPSTREAM_FAILED", "message": str(exc)}) from exc
+
+
+@app.post("/api/ai/plan-intent")
+def ai_plan_intent(payload: PlanningIntentRequest) -> dict:
+    try:
+        return planning_intent_with_glm(payload)
+    except AIConfigurationError as exc:
+        raise HTTPException(status_code=503, detail={"code": "AI_NOT_CONFIGURED", "message": str(exc)}) from exc
+    except AIUpstreamError as exc:
+        raise HTTPException(status_code=502, detail={"code": "PLAN_INTENT_INVALID", "message": str(exc)}) from exc
 
 
 @app.post("/api/ai/asr")

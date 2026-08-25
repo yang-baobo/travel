@@ -167,7 +167,7 @@ interface HotelRecommendation {
 type TravelPace = 'intense' | 'comfort' | 'leisure';
 const PACE_CONFIG: Record<TravelPace, { label: string; icon: string; hoursPerDay: number; desc: string; color: string }> = {
   intense: { label: '特种兵', icon: 'flash', hoursPerDay: 9, desc: '8-10h/天 暴走打卡', color: '#EF4444' },
-  comfort: { label: '舒适', icon: 'happy', hoursPerDay: 6, desc: '5-6h/天 不赶不慢', color: '#3B82F6' },
+  comfort: { label: '舒适', icon: 'happy', hoursPerDay: 6, desc: '5-6h/天 不赶不慢', color: '#0E9F93' },
   leisure: { label: '休闲', icon: 'cafe', hoursPerDay: 4, desc: '3-4h/天 慢节奏', color: '#10B981' },
 };
 
@@ -2378,7 +2378,7 @@ export default function RoutePlanScreen() {
     if (item.type === 'attraction') return colors.primary;
     if (item.type === 'restaurant') return item.source === 'hotel' ? '#10B981' : colors.warningYellow;
     if (item.type === 'transport') return colors.accent;
-    if (item.type === 'hotel') return '#8B5CF6';
+    if (item.type === 'hotel') return '#6E58A5';
     if (item.type === 'flight') return '#F97316';
     return colors.successGreen;
   };
@@ -2853,16 +2853,16 @@ export default function RoutePlanScreen() {
               activeOpacity={0.7}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
-                <Ionicons name="calendar-outline" size={18} color="#1565C0" />
-                <Text style={[typography.bodySmall, { flex: 1, color: '#1565C0', fontWeight: '600' }]}>
+                <Ionicons name="calendar-outline" size={18} color="#0A7A70" />
+                <Text style={[typography.bodySmall, { flex: 1, color: '#0A7A70', fontWeight: '600' }]}>
                   {nearbyDateWarning.type === 'departure' ? '去程' : '返程'}{nearbyDateWarning.date}有更便宜航班，可省{nearbyDateWarning.diff}元
                 </Text>
-                <Ionicons name="chevron-forward" size={16} color="#1565C0" />
+                <Ionicons name="chevron-forward" size={16} color="#0A7A70" />
               </View>
               <Text style={[typography.caption, { color: '#0D47A1', marginTop: 4, marginLeft: 26 }]}>
                 {f.airline} {f.flightNo} · {f.departureTime}-{f.arrivalTime} · {cabinLabel}{f.isDirect ? '·直飞' : `·经停${f.stopCity}`} · {formatPrice(f.totalPrice)}
               </Text>
-              <Text style={[typography.caption, { color: '#1565C0', marginTop: 2, marginLeft: 26 }]}>
+              <Text style={[typography.caption, { color: '#0A7A70', marginTop: 2, marginLeft: 26 }]}>
                 点击查看详情
               </Text>
             </TouchableOpacity>
@@ -3521,10 +3521,10 @@ export default function RoutePlanScreen() {
             const nightNum = (selectedDays - 1) + i + 1; // 额外的晚序号（接在常规住宿后面）
             const dayLabel = `额外第${i + 1}晚`;
             return (
-              <View key={`extra-night-${i}`} style={[styles.dayCard, { borderLeftColor: '#8B5CF6', borderLeftWidth: 3 }]}>
+              <View key={`extra-night-${i}`} style={[styles.dayCard, { borderLeftColor: '#6E58A5', borderLeftWidth: 3 }]}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-                    <Ionicons name="moon-outline" size={18} color="#8B5CF6" />
+                    <Ionicons name="moon-outline" size={18} color="#6E58A5" />
                     <Text style={[typography.bodySmall, { fontWeight: '700' }]}>{dayLabel}</Text>
                   </View>
                   <TouchableOpacity
@@ -3825,7 +3825,7 @@ export default function RoutePlanScreen() {
                 Alert.alert('已添加', `已延长为 ${selectedDays + 1} 天行程，景点已自动重新分布`);
               }}
             >
-              <Ionicons name="bed-outline" size={22} color="#8B5CF6" />
+              <Ionicons name="bed-outline" size={22} color="#6E58A5" />
               <Text style={[typography.bodySmall, { fontWeight: '600' }]}>多住一晚</Text>
               <Text style={[typography.caption, { textAlign: 'center' }]}>+1天行程</Text>
             </TouchableOpacity>
@@ -4919,7 +4919,7 @@ export default function RoutePlanScreen() {
               <ScrollView style={{ padding: spacing.lg }}>
                 {/* 类型徽章 */}
                 <View style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, backgroundColor: flightCompareData.type === 'sameDay' ? '#FFF3E0' : '#E3F2FD', marginBottom: spacing.md }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: flightCompareData.type === 'sameDay' ? '#E65100' : '#1565C0' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: flightCompareData.type === 'sameDay' ? '#E65100' : '#0A7A70' }}>
                     {flightCompareData.type === 'sameDay' ? '同日更便宜' : `临近日期更便宜 (${flightCompareData.date})`}
                   </Text>
                 </View>
