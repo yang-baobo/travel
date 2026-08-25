@@ -249,14 +249,16 @@ function SliceBridge({ place, scrollY, ambient }: {
 }) {
   const [frameWidth, setFrameWidth] = useState(0);
   const panelCount = 5;
+  const panelGap = 3;
   const panelWidth = frameWidth / panelCount;
-  const imageScale = ambient.interpolate({ inputRange: [0, 1], outputRange: [1.01, 1.035] });
-  const imageDrift = ambient.interpolate({ inputRange: [0, 1], outputRange: [-2, 2] });
-  const scrollLift = scrollY.interpolate({
-    inputRange: [900, 1420],
-    outputRange: [10, 0],
-    extrapolate: 'clamp',
-  });
+  const floatRanges = [
+    [-10, 6],
+    [7, -8],
+    [-6, 10],
+    [9, -6],
+    [-9, 7],
+  ] as const;
+  const groupScale = ambient.interpolate({ inputRange: [0, 1], outputRange: [1.004, 1.014] });
   const sheenX = ambient.interpolate({
     inputRange: [0, 1],
     outputRange: [-80, Math.max(80, frameWidth + 40)],
@@ -279,32 +281,39 @@ function SliceBridge({ place, scrollY, ambient }: {
         onLayout={event => setFrameWidth(event.nativeEvent.layout.width)}
       >
         {frameWidth > 0 ? (
-          <Animated.View
-            style={[StyleSheet.absoluteFillObject, {
-              transform: [
-                { translateY: Animated.add(scrollLift, imageDrift) },
-                { scale: imageScale },
-              ],
-            }]}
-          >
-            {Array.from({ length: panelCount }).map((_, index) => (
-              <View
-                key={index}
-                style={[styles.slice, {
-                  left: index * panelWidth,
-                  width: panelWidth + 0.5,
-                }]}
-              >
-                <Image
-                  source={{ uri: place.imageUrl }}
-                  style={[styles.slicePiece, {
-                    left: -index * panelWidth,
-                    width: frameWidth,
+          <Animated.View style={[StyleSheet.absoluteFillObject, { transform: [{ scale: groupScale }] }]}>
+            {Array.from({ length: panelCount }).map((_, index) => {
+              const floatY = ambient.interpolate({
+                inputRange: [0, 1],
+                outputRange: [...floatRanges[index]],
+              });
+              const scrollStagger = scrollY.interpolate({
+                inputRange: [900, 1420],
+                outputRange: [index % 2 === 0 ? 14 : -14, 0],
+                extrapolate: 'clamp',
+              });
+              const panelLeft = index * panelWidth + panelGap / 2;
+              return (
+                <Animated.View
+                  key={index}
+                  style={[styles.slice, {
+                    left: panelLeft,
+                    width: Math.max(0, panelWidth - panelGap),
+                    zIndex: index % 2 === 0 ? 2 : 1,
+                    transform: [{ translateY: Animated.add(scrollStagger, floatY) }],
                   }]}
-                />
-                {index > 0 ? <View style={styles.sliceDivider} /> : null}
-              </View>
-            ))}
+                >
+                  <Image
+                    source={{ uri: place.imageUrl }}
+                    style={[styles.slicePiece, {
+                      left: -panelLeft,
+                      width: frameWidth,
+                    }]}
+                  />
+                  <View pointerEvents="none" style={styles.sliceInnerLight} />
+                </Animated.View>
+              );
+            })}
           </Animated.View>
         ) : (
           <Image source={{ uri: place.imageUrl }} style={StyleSheet.absoluteFillObject} />
@@ -373,10 +382,10 @@ const styles = StyleSheet.create({
   sliceMeta: { alignItems: 'flex-end', gap: 3 },
   sliceFrameLabel: { color: '#0E9F93', fontSize: 6.5, fontWeight: '900', letterSpacing: 0.7 },
   sliceSource: { color: '#65807A', fontSize: 8, fontWeight: '800' },
-  sliceImage: { position: 'relative', height: 150, overflow: 'hidden', borderRadius: 18, backgroundColor: '#B9D7CD' },
-  slice: { position: 'absolute', top: 0, bottom: 0, overflow: 'hidden' },
+  sliceImage: { position: 'relative', height: 172, overflow: 'hidden', borderRadius: 18, backgroundColor: '#C7DED6' },
+  slice: { position: 'absolute', top: 12, bottom: 12, overflow: 'hidden', borderRadius: 13, backgroundColor: '#B9D7CD', shadowColor: '#0B514A', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 5 } },
   slicePiece: { position: 'absolute', top: 0, height: '100%', resizeMode: 'cover' },
-  sliceDivider: { position: 'absolute', left: 0, top: 10, bottom: 10, width: 1, backgroundColor: 'rgba(255,255,255,0.52)' },
+  sliceInnerLight: { ...StyleSheet.absoluteFillObject, borderWidth: 1, borderColor: 'rgba(255,255,255,0.24)', borderRadius: 13 },
   sliceSheen: { position: 'absolute', top: -24, bottom: -24, left: 0, width: 62 },
   emptyCard: { width: 290, height: 205, borderRadius: 24, backgroundColor: '#DDEBE7', alignItems: 'center', justifyContent: 'center', padding: 22 },
   emptyText: { color: '#617571', fontSize: 12, textAlign: 'center', marginTop: 9 },

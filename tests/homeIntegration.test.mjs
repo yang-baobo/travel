@@ -66,7 +66,9 @@ test('empty trip card is a real animated planning entry', () => {
 
 test('five-frame image uses one responsive source crop', () => {
   assert.match(discovery, /const panelCount = 5/);
-  assert.match(discovery, /left: -index \* panelWidth/);
+  assert.match(discovery, /const floatRanges =/);
+  assert.match(discovery, /left: -panelLeft/);
   assert.match(discovery, /width: frameWidth/);
+  assert.match(discovery, /Animated\.add\(scrollStagger, floatY\)/);
   assert.doesNotMatch(discovery, /width: 560|left: \x60\$\{-index \* 25\}%\x60/);
 });
