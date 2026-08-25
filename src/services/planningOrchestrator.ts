@@ -290,7 +290,7 @@ export function createPlanningOrchestrator(
             checkInDate: request.preferenceSnapshot.travelStartDate,
             checkOutDate: addDays(request.preferenceSnapshot.travelStartDate, Math.max(1, request.days - 1)),
             maxReferencePrice: Math.min(hotelBudget, request.preferenceSnapshot.hotelPriceRange.max),
-            sortBy: 'rating',
+            sortBy: 'price_asc',
           })
         : Promise.resolve(null);
       const [attractionsResult, restaurantsResult, hotelsResult] = await Promise.allSettled([

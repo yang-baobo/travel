@@ -86,4 +86,37 @@ describe('Planning Orchestrator', () => {
     assert.equal(result.draft?.unassignedPlaces[0].reasonCode, 'hours_unverified');
     assert.match(result.draft?.blockingIssues.join(' ') || '', /没有同时满足/);
   });
+
+  test('uses a FlyAI-supported hotel sort instead of the rejected rating sort', async () => {
+    const base = planningRequest();
+    const request = planningRequest({
+      preferenceSnapshot: { ...base.preferenceSnapshot, needHotel: true },
+    });
+    let hotelSort: string | undefined;
+    const orchestrator = createPlanningOrchestrator({
+      getIntent: async () => intent(request),
+      searchPlaces: async category => ({ city: { name: '北京', adcode: '110000', citycode: '010' }, category, source: 'amap', page: 1, pageSize: 1, total: 0, hasMore: false, items: [] }),
+      searchHotels: async params => {
+        hotelSort = params.sortBy;
+        return {
+          hotels: [],
+          meta: {
+            source: 'fliggy',
+            count: 0,
+            queryStatus: 'no_results',
+            priceMeaning: 'search_reference',
+            priceDisclaimer: 'FlyAI 查询参考价',
+            nearbyPrecision: 'not_requested',
+            ratingAvailable: false,
+          },
+        };
+      },
+      buildMatrix: async () => { throw new Error('hotel sort contract test stops before route use'); },
+      optimize: async () => { throw new Error('optimizer must not run'); },
+    });
+
+    await orchestrator.plan({ sessionId: 'planning-hotel-contract', request, messages: [] });
+    assert.equal(hotelSort, 'price_asc');
+    assert.notEqual(hotelSort, 'rating');
+  });
 });
