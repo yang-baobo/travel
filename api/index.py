@@ -40,6 +40,7 @@ try:
     from .hotels.models import HotelSearchParams, HotelSearchResponse
     from .hotels.service import TravelHotelService
     from .hotel_geo import HotelGeoRequest, HotelGeoResponse, resolve_hotel_geography
+    from .fliggy_attractions import FliggyAttractionError, get_fliggy_editorial_attractions
     from .travel_providers import (
         ProviderNotConfigured,
         ProviderRequestError,
@@ -71,6 +72,10 @@ except ImportError:  # Vercel can load this module without a package context.
     from hotels.models import HotelSearchParams, HotelSearchResponse  # type: ignore[no-redef]
     from hotels.service import TravelHotelService  # type: ignore[no-redef]
     from hotel_geo import HotelGeoRequest, HotelGeoResponse, resolve_hotel_geography  # type: ignore[no-redef]
+    from fliggy_attractions import (  # type: ignore[no-redef]
+        FliggyAttractionError,
+        get_fliggy_editorial_attractions,
+    )
     from travel_providers import (  # type: ignore[no-redef]
         ProviderNotConfigured,
         ProviderRequestError,
@@ -400,6 +405,20 @@ def travel_places(
             status_code=502,
             detail={"code": "PROVIDER_REQUEST_FAILED", "message": str(exc)},
         ) from exc
+
+
+@app.get("/api/travel/attractions/editorial")
+def travel_attraction_editorial() -> dict:
+    """Return FlyAI photos bound to the exact POI item supplied by FlyAI."""
+    try:
+        return get_fliggy_editorial_attractions()
+    except FliggyAttractionError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+
+
 COORDINATE_PATTERN = re.compile(r"^-?(?:180(?:\.0+)?|1[0-7]\d(?:\.\d+)?|\d?\d(?:\.\d+)?),-?(?:90(?:\.0+)?|[0-8]?\d(?:\.\d+)?)$")
 
 

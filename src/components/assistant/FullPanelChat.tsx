@@ -45,6 +45,8 @@ export default function FullPanelChat({ voiceEngine }: Props) {
   const messages = useAssistantStore((s) => s.messages);
   const isProcessing = useAssistantStore((s) => s.isProcessing);
   const phase = useAssistantStore((s) => s.phase);
+  const pendingPrompt = useAssistantStore((s) => s.pendingPrompt);
+  const consumePendingPrompt = useAssistantStore((s) => s.consumePendingPrompt);
   const {
     addMessage,
     setIsProcessing,
@@ -187,6 +189,13 @@ export default function FullPanelChat({ voiceEngine }: Props) {
       setIsProcessing(false);
     }
   }, [navigation, speakText]);
+
+  // 首页携带的规划需求也必须走与手动发送相同的 GLM 请求链路。
+  useEffect(() => {
+    if (!pendingPrompt) return;
+    const prompt = consumePendingPrompt();
+    if (prompt) void handleSendMessage(prompt);
+  }, [pendingPrompt, consumePendingPrompt, handleSendMessage]);
 
   // 文字发送
   const handleTextSend = useCallback(() => {

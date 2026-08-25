@@ -97,6 +97,7 @@ interface AssistantState {
   // 对话
   messages: ChatBubble[];
   isProcessing: boolean;
+  pendingPrompt: string | null;
 
   // 路线
   routeSummary: RouteSummary | null;
@@ -107,6 +108,8 @@ interface AssistantState {
 
   // Actions
   openAssistant: () => void;
+  openAssistantWithPrompt: (prompt: string) => void;
+  consumePendingPrompt: () => string | null;
   closeAssistant: () => void;
   setPhase: (phase: AssistantPhase) => void;
   addMessage: (bubble: ChatBubble) => void;
@@ -142,6 +145,7 @@ export const useAssistantStore = create<AssistantState>((set, get) => ({
 
   messages: [],
   isProcessing: false,
+  pendingPrompt: null,
 
   routeSummary: null,
   routePresentationText: '',
@@ -156,12 +160,30 @@ export const useAssistantStore = create<AssistantState>((set, get) => ({
     });
   },
 
+  openAssistantWithPrompt: (prompt) => {
+    const normalizedPrompt = prompt.trim();
+    if (!normalizedPrompt) return;
+    set({
+      phase: 'collecting',
+      displayMode: 'full_panel',
+      isMiniExpanded: false,
+      pendingPrompt: normalizedPrompt,
+    });
+  },
+
+  consumePendingPrompt: () => {
+    const prompt = get().pendingPrompt;
+    if (prompt) set({ pendingPrompt: null });
+    return prompt;
+  },
+
   closeAssistant: () => {
     set({
       phase: 'idle',
       displayMode: 'hidden',
       isMiniExpanded: false,
       isProcessing: false,
+      pendingPrompt: null,
     });
   },
 
@@ -217,6 +239,7 @@ export const useAssistantStore = create<AssistantState>((set, get) => ({
       isMiniExpanded: false,
       messages: [],
       isProcessing: false,
+      pendingPrompt: null,
       routeSummary: null,
       routePresentationText: '',
       pendingModification: null,

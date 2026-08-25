@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import type {
+  FliggyAttractionEditorialResponse,
   TravelPlaceCategory,
   TravelPlaceListResponse,
   TravelProviderStatus,
@@ -24,6 +25,14 @@ export function searchTravelPlaces(
     pageSize: String(pageSize),
   });
   return apiRequest<TravelPlaceListResponse>(`/api/travel/places?${params.toString()}`);
+}
+
+export function fetchFliggyAttractionEditorial(): Promise<FliggyAttractionEditorialResponse> {
+  return apiRequest<FliggyAttractionEditorialResponse>(
+    '/api/travel/attractions/editorial',
+    undefined,
+    45_000,
+  );
 }
 
 export function fetchTravelRoutes(

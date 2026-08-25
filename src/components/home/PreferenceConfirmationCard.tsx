@@ -21,7 +21,7 @@ export default function PreferenceConfirmationCard({
   if (!visible) return null;
   const finishEdit = () => { if (draft.trim()) onPreferenceChange?.(draft.trim()); setEditing(false); onAction('edit'); };
   return <View style={[styles.card, large && styles.cardLarge]}>
-    <View style={styles.titleRow}><View style={styles.icon}><Ionicons name="sparkles" size={16} color="#FFF" /></View><View style={styles.copy}><Text style={[styles.title, large && styles.largeText]}>我听到你的偏好</Text>{editing ? <TextInput autoFocus value={draft} onChangeText={setDraft} style={styles.editor} returnKeyType="done" onSubmitEditing={finishEdit} /> : <Text style={[styles.preference, large && styles.largeText]}>“{preference}”</Text>}</View></View>
+    <View style={styles.titleRow}><View style={styles.icon}><Ionicons name="sparkles" size={16} color="#FFF" /></View><View style={styles.copy}><Text style={[styles.title, large && styles.largeText]}>我听到你的偏好</Text>{editing ? <TextInput autoFocus value={draft} onChangeText={setDraft} style={styles.editor} returnKeyType="done" onSubmitEditing={finishEdit} /> : <Text style={[styles.preference, large && styles.largeText]}>"{preference}"</Text>}</View></View>
     <Text style={[styles.hint, large && styles.largeText]}>{editing ? '可以改成更准确的说法，再确认。' : '这次行程要怎么使用？'}</Text>
     <View style={styles.actions}>
       <Pressable style={styles.action} onPress={() => onAction('once')}><Text style={styles.actionText}>仅本次使用</Text></Pressable>

@@ -47,6 +47,40 @@ export interface TravelPlaceListResponse {
   items: TravelPlace[];
 }
 
+export interface FliggyAttractionTicket {
+  itemId: string | null;
+  name: string | null;
+  priceText: string | null;
+}
+
+export interface FliggyAttractionEditorial {
+  id: string;
+  source: 'fliggy';
+  sourcePoiId: string;
+  city: '北京';
+  name: string;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  category: string | null;
+  poiLevel: string | null;
+  description: string | null;
+  imageUrl: string;
+  jumpUrl: string | null;
+  ticket: FliggyAttractionTicket | null;
+}
+
+export interface FliggyAttractionEditorialResponse {
+  attractions: FliggyAttractionEditorial[];
+  meta: {
+    source: 'fliggy';
+    city: '北京';
+    count: number;
+    imageMeaning: string;
+    generatedAt?: string;
+  };
+}
+
 export interface TravelProviderStatus {
   city: { name: '北京'; adcode: '110000'; citycode: '010' };
   amap: { configured: boolean; capabilities: string[] };

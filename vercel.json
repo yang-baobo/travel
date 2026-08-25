@@ -9,22 +9,71 @@
     },
     "api/flyai_hotels.mjs": {
       "maxDuration": 60
+    },
+    "api/flyai_attractions.mjs": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
-    { "source": "/api/travel/config", "destination": "/api/index" },
-    { "source": "/api/travel/places", "destination": "/api/index" },
-    { "source": "/api/travel/routes", "destination": "/api/index" },
-    { "source": "/api/travel/hotels/search", "destination": "/api/flyai_hotels" },
-    { "source": "/api/travel/hotels/geocode", "destination": "/api/index" },
-    { "source": "/api/travel/blind-box", "destination": "/api/index" },
-    { "source": "/api/travel/optimize-route", "destination": "/api/index" },
-    { "source": "/api/ai/config", "destination": "/api/index" },
-    { "source": "/api/ai/chat", "destination": "/api/index" },
-    { "source": "/api/ai/asr", "destination": "/api/index" },
-    { "source": "/api/ai/realtime", "destination": "/api/index" },
-    { "source": "/api/optimize-route", "destination": "/api/index" },
-    { "source": "/api/health", "destination": "/api/index" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/api/travel/config",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/travel/places",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/travel/attractions/editorial",
+      "destination": "/api/flyai_attractions"
+    },
+    {
+      "source": "/api/travel/routes",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/travel/hotels/search",
+      "destination": "/api/flyai_hotels"
+    },
+    {
+      "source": "/api/travel/hotels/geocode",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/travel/blind-box",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/travel/optimize-route",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/ai/config",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/ai/chat",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/ai/asr",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/ai/realtime",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/optimize-route",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }
