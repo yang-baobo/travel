@@ -1,10 +1,93 @@
 import { usePlanningSessionStore } from '../store/usePlanningSessionStore';
 import { useTripStore } from '../store/useTripStore';
-import type { PlanningRequest, TripPlanDraft } from '../types/planning';
+import type { PlanningInputMethod, PlanningRequest, TripPlanDraft } from '../types/planning';
+import {
+  applyPlanningAnswer,
+  missingRequiredRequirements,
+  nextRequirement,
+  planningQuestion,
+  requirementSummary,
+} from './planningCollection';
+import { refreshPlanningRequestPreferences } from './planningRequestBuilder';
 import { planningOrchestrator } from './planningOrchestrator';
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '规划服务暂时不可用';
+  const message = error instanceof Error ? error.message : '';
+  if (/invalid_request_error|request_id|request is invalid|check the request body/i.test(message)) {
+    return 'AI 理解服务暂时不可用，已保留你填写的条件。请稍后重试。';
+  }
+  return message || '规划服务暂时不可用';
+}
+
+export function ensurePlanningCollectionPrompt(): void {
+  const store = usePlanningSessionStore.getState();
+  const session = store.session;
+  if (!session) return;
+  if (!session.messages.some(message => message.role === 'assistant')) {
+    const first = nextRequirement(session);
+    store.addMessage({
+      role: 'assistant',
+      text: first
+        ? `我会先把制定路线必须的信息逐项记下来，收齐后再查询真实数据。${planningQuestion(first.key, session.request)}`
+        : '制定路线所需的信息已经齐全。你可以先核对偏好与必填项，再开始生成真实路线。',
+    });
+  }
+  store.setStatus('collecting');
+}
+
+export function answerPlanningCollection(
+  text: string,
+  inputMethod: PlanningInputMethod = 'text',
+  recordMessage = true,
+): void {
+  const store = usePlanningSessionStore.getState();
+  const session = store.session;
+  if (!session || !text.trim()) return;
+  const active = nextRequirement(session);
+  if (!active) return;
+  if (recordMessage) store.addMessage({ role: 'user', text: text.trim(), inputMethod });
+  const applied = applyPlanningAnswer(session.request, active.key, text);
+  store.updateRequest(applied.request);
+  applied.confirmedKeys.forEach(key => {
+    store.updateRequirement(key, requirementSummary(key, applied.request), inputMethod);
+  });
+  const updated = usePlanningSessionStore.getState().session;
+  if (!updated) return;
+  const next = nextRequirement(updated);
+  if (next) {
+    const understood = applied.confirmedKeys.length
+      ? `好的，已经记下：${applied.confirmedKeys.map(key => requirementSummary(key, applied.request)).join('；')}。`
+      : '这条信息我已经保留，但还不能确认当前必填项。';
+    store.addMessage({ role: 'assistant', text: `${understood}${planningQuestion(next.key, updated.request)}` });
+    store.setStatus('collecting');
+  } else {
+    store.addMessage({ role: 'assistant', text: '必填信息已经收齐。请核对上方记录；确认无误后，我再去查询真实景点、酒店、餐厅和交通。' });
+    store.setStatus('collecting');
+  }
+}
+
+export function syncPlanningPreferences(): void {
+  const store = usePlanningSessionStore.getState();
+  const session = store.session;
+  if (!session) return;
+  const request = refreshPlanningRequestPreferences(session.request);
+  store.updateRequest(request);
+  (['preferences', 'transport', 'stay_meals', 'constraints'] as const).forEach(key => {
+    store.updateRequirement(key, requirementSummary(key, request), 'preference_settings');
+  });
+}
+
+export async function generatePlanningDraft(): Promise<void> {
+  const store = usePlanningSessionStore.getState();
+  const session = store.session;
+  if (!session) throw new Error('规划会话不存在，请从首页重新开始。');
+  const missing = missingRequiredRequirements(session);
+  if (missing.length) {
+    store.setStatus('collecting');
+    store.addMessage({ role: 'assistant', text: `还需要确认：${missing.map(item => item.label).join('、')}。${planningQuestion(missing[0].key, session.request)}` });
+    return;
+  }
+  await runPlanningSession(session.request, true);
 }
 
 export async function runPlanningSession(request: PlanningRequest, reuseCurrentSession = false): Promise<void> {
@@ -16,6 +99,12 @@ export async function runPlanningSession(request: PlanningRequest, reuseCurrentS
   if (reuseCurrentSession && current) store.updateRequest(request);
   const active = usePlanningSessionStore.getState().session;
   if (!active) return;
+  const missing = missingRequiredRequirements(active);
+  if (missing.length) {
+    store.setStatus('collecting');
+    store.addMessage({ role: 'assistant', text: `生成前还需要确认：${missing.map(item => item.label).join('、')}。${planningQuestion(missing[0].key, request)}` });
+    return;
+  }
   store.setError(null);
   try {
     const outcome = await planningOrchestrator.plan({

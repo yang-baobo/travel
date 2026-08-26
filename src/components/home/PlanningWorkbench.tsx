@@ -6,6 +6,7 @@ import type { PlanningSession, PlanningSessionStatus } from '../../types/plannin
 
 const STATUS_COPY: Record<PlanningSessionStatus, string> = {
   idle: '等待开始',
+  collecting: '正在补齐信息',
   understanding: '正在理解',
   needs_clarification: 'AI 需要确认',
   querying_places: '正在查询真实地点',

@@ -45,6 +45,7 @@ export function planningRequest(overrides: Partial<PlanningRequest> = {}): Plann
       originalPlace: selected,
     }],
     preferenceSnapshot: {
+      hasSetPreferences: true,
       selectedCategories: ['文化'],
       cuisines: [],
       needHotel: false,

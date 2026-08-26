@@ -437,13 +437,14 @@ export type AuthStackParamList = {
 // 探索 Tab
 export type ExploreStackParamList = {
   Home: undefined;
+  AIPlanning: { launchRealtime?: boolean } | undefined;
   TripProfile: undefined;
   BlindBox: undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
   LivePlaceDetail: { placeId: string };
   LiveItinerary: undefined;
   ExploreMain: { tab?: 'attractions' | 'routes' | 'guides' };
-  Preference: undefined;
+  Preference: { returnToPlanning?: boolean } | undefined;
   Recommendation: undefined;
   AttractionDetail: { attractionId: string };
   PresetRouteList: undefined;

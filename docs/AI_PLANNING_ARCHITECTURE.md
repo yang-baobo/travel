@@ -2,14 +2,20 @@
 
 ## 正式链路
 
-首页文字、StepAudio ASR 和 StepAudio Realtime 共用一份 `PlanningSession`：
+首页的三种规划方式共用一份 `PlanningSession`：
+
+- `selected_places`：用户先选择高德真实景点，AI 按偏好补齐酒店、餐厅和交通。
+- `chat`：AI 通过文字/ASR 对话逐项收集必填条件，景点可指定，也可让 AI 推荐。
+- `realtime`：StepAudio 电话式对话复用同一信息框架和会话，结束后回到规划页继续核对。
 
 1. 首页把输入方式、规划模式、北京、天数、人数、总预算、节奏、真实候选地点、偏好快照和硬性限制写入结构化 `PlanningRequest`。
-2. GLM 仅返回经过前后端 Schema 校验的 `PlanIntent`，不能生成地点 ID、坐标、酒店价格、营业时间或交通耗时。
-3. `planningOrchestrator` 使用高德查询景点、餐厅、地点坐标与交通矩阵，使用 FlyAI 查询酒店，再用高德核验酒店坐标。
-4. 路线排序调用 `/api/travel/optimize-route`。无法满足营业时间、预算、步行、行动能力、夜间、过敏或危险项目限制的地点会保留明确原因。
-5. 结果先进入 `PlanningSession.draft`。用户在首页确认后，`commitDraft()` 才写入持久化的唯一正式 `Trip`。
-6. 首页当前行程卡、行程 Tab 和 `LiveItineraryScreen` 优先读取同一份正式 `Trip`。
+2. 首页只创建会话并跳转 `AIPlanningScreen`，不会立即查询供应商或生成半成品草稿。
+3. 规划页把目的地、日期/天数、人数、总预算、节奏、旅行偏好、交通、住宿/用餐和硬性限制列为必填框架；景点为可选项。每次回答都会同时写入 `messages` 和结构化 `PlanningRequest`。
+4. 必填项全部确认后才允许调用 GLM。GLM 仅返回经过前后端 Schema 校验的 `PlanIntent`，不能生成地点 ID、坐标、酒店价格、营业时间或交通耗时。
+5. `planningOrchestrator` 根据偏好关键字使用高德查询景点、餐厅、地点坐标与交通矩阵，使用 FlyAI 查询酒店，再用高德核验酒店坐标。
+6. 路线排序调用 `/api/travel/optimize-route`。无法满足营业时间、预算、步行、行动能力、夜间、过敏或危险项目限制的地点会保留明确原因。
+7. 结果先进入 `PlanningSession.draft`。用户在独立规划页确认后，`commitDraft()` 才写入持久化的唯一正式 `Trip`。
+8. 首页当前行程卡、行程 Tab 和 `LiveItineraryScreen` 优先读取同一份正式 `Trip`。
 
 正式链路不会调用 `src/utils/routeGenerator.ts`，也不会使用 `src/data/attractions.ts`、`src/data/restaurants.ts` 或 `src/data/hotels.ts` 补位。
 
@@ -23,8 +29,8 @@
 
 ## 语音边界
 
-- ASR 只把 StepAudio 转写结果放回首页输入框，用户可以编辑后提交。
-- Realtime 电话界面把用户和助手消息写入当前 `PlanningSession`，结束后以同一 session 在首页继续生成草稿。
+- ASR 只把 StepAudio 转写结果放回首页或规划页输入框，用户可以编辑后提交。
+- Realtime 电话界面读取当前必填进度，把用户和助手消息写入当前 `PlanningSession`；结束后回到同一规划页核对，不直接生成另一份路线。
 - StepAudio、GLM、高德和 FlyAI 凭证只由服务端环境变量读取，客户端不包含真实 Key。
 
 ## 正式行程修改

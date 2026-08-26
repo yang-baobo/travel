@@ -3,11 +3,15 @@ import type {
   DraftPatchPreview,
   PlanIntent,
   PlanningMessage,
+  PlanningEntryMode,
   PlanningRequest,
+  PlanningRequirementKey,
+  PlanningRequirementProgress,
   PlanningSession,
   PlanningSessionStatus,
   TripPlanDraft,
 } from '../types/planning';
+import { buildPlanningRequirements, requirementSummary } from '../services/planningCollection';
 
 function makeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -19,8 +23,10 @@ function now(): string {
 
 interface PlanningSessionState {
   session: PlanningSession | null;
-  beginSession: (request: PlanningRequest) => string;
+  beginSession: (request: PlanningRequest, options?: { entryMode?: PlanningEntryMode; confirmedRequirements?: PlanningRequirementKey[] }) => string;
   updateRequest: (patch: Partial<PlanningRequest>) => void;
+  updateRequirement: (key: PlanningRequirementKey, summary: string, source: Exclude<PlanningRequirementProgress['source'], null>) => void;
+  setEntryMode: (entryMode: PlanningEntryMode) => void;
   setStatus: (status: PlanningSessionStatus) => void;
   addMessage: (message: Omit<PlanningMessage, 'id' | 'createdAt'> & Partial<Pick<PlanningMessage, 'id' | 'createdAt'>>) => void;
   setPlanIntent: (intent: PlanIntent | null) => void;
@@ -34,14 +40,17 @@ interface PlanningSessionState {
 export const usePlanningSessionStore = create<PlanningSessionState>((set, get) => ({
   session: null,
 
-  beginSession: request => {
+  beginSession: (request, options) => {
     const id = makeId('planning');
     const timestamp = now();
+    const entryMode = options?.entryMode || (request.inputMethod === 'realtime' ? 'realtime' : request.candidates.length ? 'selected_places' : 'chat');
     set({
       session: {
         id,
-        status: 'idle',
+        entryMode,
+        status: 'collecting',
         request,
+        requirements: buildPlanningRequirements(request, entryMode, options?.confirmedRequirements),
         messages: request.userInput.trim()
           ? [{
               id: makeId('message'),
@@ -67,8 +76,24 @@ export const usePlanningSessionStore = create<PlanningSessionState>((set, get) =
     session: {
       ...state.session,
       request: { ...state.session.request, ...patch },
+      requirements: state.session.requirements.map(item => ({
+        ...item,
+        summary: requirementSummary(item.key, { ...state.session!.request, ...patch }),
+      })),
       updatedAt: now(),
     },
+  }) : state),
+
+  updateRequirement: (key, summary, source) => set(state => state.session ? ({
+    session: {
+      ...state.session,
+      requirements: state.session.requirements.map(item => item.key === key ? ({ ...item, status: 'confirmed', summary, source }) : item),
+      updatedAt: now(),
+    },
+  }) : state),
+
+  setEntryMode: entryMode => set(state => state.session ? ({
+    session: { ...state.session, entryMode, updatedAt: now() },
   }) : state),
 
   setStatus: status => set(state => state.session ? ({

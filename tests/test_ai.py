@@ -96,9 +96,10 @@ class AIServiceTest(unittest.TestCase):
         self.assertEqual(result["provider"], "remote_glm")
         self.assertEqual(result["normalizedRequest"]["city"], "北京")
         upstream_payload = post_json.call_args.args[2]
-        self.assertEqual(upstream_payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("thinking", upstream_payload)
         self.assertEqual(upstream_payload["response_format"], {"type": "json_object"})
         self.assertEqual(upstream_payload["max_tokens"], 800)
+        self.assertEqual(post_json.call_args.kwargs["timeout"], 75)
 
     def test_plan_intent_rejects_forged_location_fields(self) -> None:
         upstream = {

@@ -22,13 +22,6 @@ import { useRouteStore } from '../../store/useRouteStore';
 import { usePlanningSessionStore } from '../../store/usePlanningSessionStore';
 import { useTripStore } from '../../store/useTripStore';
 import { buildPlanningRequest } from '../../services/planningRequestBuilder';
-import {
-  answerPlanningClarification,
-  commitDraft,
-  replacePlanningDraft,
-  retryPlanningSession,
-  runPlanningSession,
-} from '../../services/planningSessionService';
 import { useVoiceEngine } from '../../hooks/useVoiceEngine';
 import type { ExploreStackParamList } from '../../types';
 import type { FliggyAttractionEditorial, TravelPlace } from '../../types/travel';
@@ -42,9 +35,7 @@ import PlannerModeSelector from '../../components/home/PlannerModeSelector';
 import PlannerParameterPicker from '../../components/home/PlannerParameterPicker';
 import PreferenceConfirmationCard from '../../components/home/PreferenceConfirmationCard';
 import BeijingDiscoverySection from '../../components/home/BeijingDiscoverySection';
-import PlanningWorkbench from '../../components/home/PlanningWorkbench';
-import RealtimeCallPanel from '../../components/assistant/RealtimeCallPanel';
-import type { PlanningInputMethod } from '../../types/planning';
+import type { PlanningEntryMode, PlanningInputMethod, PlanningRequirementKey } from '../../types/planning';
 
 type Navigation = NativeStackNavigationProp<ExploreStackParamList, 'Home'>;
 type ParameterField = keyof PlannerParams;
@@ -118,7 +109,7 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 900;
   const isWide = width >= 1180;
-  const heroHeight = isDesktop ? 760 : 690;
+  const heroHeight = isDesktop ? 790 : 760;
 
   const elderlyMode = usePreferenceStore(state => state.elderlyMode);
   const setElderlyMode = usePreferenceStore(state => state.setElderlyMode);
@@ -152,7 +143,6 @@ export default function HomeScreen() {
   const [ignoredIds, setIgnoredIds] = useState<string[]>([]);
   const [autoPlanIds, setAutoPlanIds] = useState<string[]>([]);
   const [inputMethod, setInputMethod] = useState<PlanningInputMethod>('text');
-  const [realtimeVisible, setRealtimeVisible] = useState(false);
 
   const scrollY = useRef(new Animated.Value(0)).current;
   const heroOpacity = useRef(new Animated.Value(1)).current;
@@ -333,14 +323,20 @@ export default function HomeScreen() {
     inputMethod: method,
     mode,
     params,
-    candidates: featured.filter(place => activePlanIds.includes(place.id)),
+    candidates: mode === 'auto' ? [] : featured.filter(place => activePlanIds.includes(place.id)),
   });
 
-  const startPlanning = () => {
+  const enterPlanning = (entryMode: PlanningEntryMode, method: PlanningInputMethod, launchRealtime = false) => {
     if (planning) return;
-    if (!plannerExpanded) togglePlanner();
-    void runPlanningSession(createRequest(inputMethod));
+    const confirmedRequirements: PlanningRequirementKey[] = plannerExpanded ? ['people', 'budget', 'pace'] : [];
+    usePlanningSessionStore.getState().beginSession(createRequest(method), { entryMode, confirmedRequirements });
+    navigation.navigate('AIPlanning', launchRealtime ? { launchRealtime: true } : undefined);
     setInputMethod('text');
+  };
+
+  const startPlanning = () => {
+    const entryMode: PlanningEntryMode = plannerExpanded && mode !== 'auto' ? 'selected_places' : 'chat';
+    enterPlanning(entryMode, inputMethod);
   };
 
   const handleAsrPress = async () => {
@@ -349,25 +345,7 @@ export default function HomeScreen() {
   };
 
   const openRealtimePlanning = () => {
-    const request = createRequest('realtime');
-    usePlanningSessionStore.getState().beginSession(request);
-    setRealtimeVisible(true);
-  };
-
-  const finishRealtimePlanning = (transcript: Array<{ role: 'user' | 'assistant'; text: string }>) => {
-    const spokenRequest = transcript.filter(item => item.role === 'user').map(item => item.text.trim()).filter(Boolean).join('；');
-    const mergedInput = [input.trim(), spokenRequest].filter(Boolean).join('；');
-    if (mergedInput) {
-      setInput(mergedInput);
-      setSessionPreference(mergedInput);
-    }
-    if (!plannerExpanded) togglePlanner();
-    void runPlanningSession(createRequest('realtime', mergedInput), true);
-  };
-
-  const confirmRoute = () => {
-    commitDraft();
-    navigation.navigate('LiveItinerary');
+    enterPlanning('realtime', 'realtime', true);
   };
 
   const chooseQuickPrompt = (prompt: string) => {
@@ -478,6 +456,12 @@ export default function HomeScreen() {
               ))}
             </View>
 
+            <View style={styles.planningMethodRow} testID="home-planning-entry-methods">
+              <Pressable onPress={togglePlanner} style={styles.planningMethodButton}><Ionicons name="map-outline" size={14} color="#FFF" /><Text style={styles.planningMethodText}>选景点规划</Text></Pressable>
+              <Pressable onPress={() => enterPlanning('chat', inputMethod)} style={styles.planningMethodButton}><Ionicons name="chatbubble-ellipses-outline" size={14} color="#FFF" /><Text style={styles.planningMethodText}>AI 对话定制</Text></Pressable>
+              <Pressable onPress={openRealtimePlanning} style={styles.planningMethodButton}><Ionicons name="call-outline" size={14} color="#FFF" /><Text style={styles.planningMethodText}>电话实时规划</Text></Pressable>
+            </View>
+
             <View style={[styles.heroBottomRow, isDesktop && styles.heroBottomRowDesktop]}>
               <Pressable onPress={togglePlanner} style={styles.deepPlanLink}>
                 <Text style={styles.deepPlanText}>{plannerExpanded ? '收起深度定制' : '展开深度定制'}</Text>
@@ -576,22 +560,12 @@ export default function HomeScreen() {
                 <PressScale onPress={startPlanning} disabled={planning} style={styles.primaryAction}>
                   <LinearGradient colors={['#17BCAA', '#08766D']} style={styles.primaryActionInner}>
                     {planning ? <ActivityIndicator color="#FFF" /> : <Ionicons name="sparkles" size={17} color="#FFF" />}
-                    <Text style={styles.primaryActionText}>{planning ? 'AI 正在规划…' : '生成真实路线'}</Text>
+                    <Text style={styles.primaryActionText}>{planning ? 'AI 正在规划…' : '进入 AI 规划页'}</Text>
                     <Ionicons name="arrow-forward" size={17} color="#FFF" />
                   </LinearGradient>
                 </PressScale>
               </View>
             </Animated.View>
-          ) : null}
-
-          {planningSession ? (
-            <PlanningWorkbench
-              session={planningSession}
-              onClarify={answerPlanningClarification}
-              onReplace={replacePlanningDraft}
-              onRetry={retryPlanningSession}
-              onCommit={confirmRoute}
-            />
           ) : null}
 
           {showPreferenceNudge ? (
@@ -613,7 +587,7 @@ export default function HomeScreen() {
 
           <Animated.View style={{ transform: [{ translateY: pageLift }] }}>
             <SectionIntro eyebrow="YOUR JOURNEY" title="这趟北京，已经开始了" subtitle={hasRoute ? '真实行程已保存，随时回到今天的路线。' : '还没有固定路线，也正好从此刻开始。'} />
-            <CurrentTripCard elderlyMode={elderlyMode} onPress={() => hasRoute ? navigation.navigate('LiveItinerary') : togglePlanner()} />
+            <CurrentTripCard elderlyMode={elderlyMode} onPress={() => hasRoute ? navigation.navigate('LiveItinerary') : enterPlanning('chat', 'text')} />
           </Animated.View>
 
           <BeijingDiscoverySection
@@ -688,11 +662,6 @@ export default function HomeScreen() {
         onClose={() => setPreviewVisible(false)}
         onViewFull={() => { setPreviewVisible(false); startPlanning(); }}
       />
-      <RealtimeCallPanel
-        visible={realtimeVisible}
-        onClose={() => setRealtimeVisible(false)}
-        onComplete={finishRealtimePlanning}
-      />
     </SafeAreaView>
   );
 }
@@ -741,6 +710,9 @@ const styles = StyleSheet.create({
   quickPromptRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   quickPrompt: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.09)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   quickPromptText: { color: 'rgba(255,255,255,0.72)', fontSize: 10, fontWeight: '700' },
+  planningMethodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 13 },
+  planningMethodButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(5,54,49,0.50)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  planningMethodText: { color: '#FFF', fontSize: 9, fontWeight: '800' },
   heroBottomRow: { marginTop: 20, gap: 18 },
   heroBottomRowDesktop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', maxWidth: 760 },
   deepPlanLink: { alignSelf: 'flex-start', minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 2 },

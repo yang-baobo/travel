@@ -13,6 +13,7 @@ const planningStore = read('src/store/usePlanningSessionStore.ts');
 const planningService = read('src/services/planningSessionService.ts');
 const planningBuilder = read('src/services/planningRequestBuilder.ts');
 const workbench = read('src/components/home/PlanningWorkbench.tsx');
+const planningScreen = read('src/screens/explore/AIPlanningScreen.tsx');
 
 test('home contains no empty press handlers or old mock planning', () => {
   assert.doesNotMatch(home, /onPress=\{\(\) => \{\}\}/);
@@ -36,9 +37,13 @@ test('quick services and real place details are navigable', () => {
 
 test('home planning input is handed to the structured Planning Session pipeline', () => {
   assert.match(home, /buildPlanningRequest\(/);
-  assert.match(home, /runPlanningSession\(/);
+  assert.match(home, /beginSession\(/);
+  assert.match(home, /navigate\('AIPlanning'/);
+  assert.doesNotMatch(home, /runPlanningSession\(/);
   assert.match(planningBuilder, /candidates: input\.candidates\.map\(toPlanningCandidate\)/);
-  assert.match(planningStore, /beginSession: \(request: PlanningRequest\) => string/);
+  assert.match(planningStore, /beginSession: \(request: PlanningRequest, options\?/);
+  assert.match(planningScreen, /generatePlanningDraft/);
+  assert.match(planningScreen, /missing\.length > 0/);
   assert.match(planningService, /planningOrchestrator\.plan\(/);
   assert.match(planningService, /export function commitDraft\(\): string/);
   assert.match(workbench, /testID="home-planning-workbench"/);

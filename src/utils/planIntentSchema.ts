@@ -102,7 +102,7 @@ export function validatePlanIntent(value: unknown): PlanIntent {
   };
 }
 
-export function buildLocalPlanIntent(request: PlanningRequest, reason: string): PlanIntent {
+export function buildLocalPlanIntent(request: PlanningRequest, _reason: string): PlanIntent {
   const needsClarification = request.userInput.trim().length === 0
     || (request.mode === 'self' && request.candidates.length === 0);
   return {
@@ -122,7 +122,7 @@ export function buildLocalPlanIntent(request: PlanningRequest, reason: string): 
       mode: request.mode,
     },
     requestPatch: {},
-    explanation: `GLM 当前不可用，已使用本地规则仅规范化现有输入；不会生成地点或价格。${reason ? `（${reason}）` : ''}`,
+    explanation: 'GLM 当前不可用，已使用本地规则仅规范化你已确认的输入；不会生成地点或价格。',
     provider: 'local_fallback',
     model: null,
   };

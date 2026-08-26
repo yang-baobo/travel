@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { CommonActions, useNavigation } from '@react-navigation/native';
+import { CommonActions, useNavigation, useRoute } from '@react-navigation/native';
 import { colors } from '../../theme/colors';
 import { spacing, borderRadius } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
@@ -123,6 +123,7 @@ function formatDateLabel(dateStr: string): string {
 
 export default function PreferenceScreen() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const {
     selectedCategories,
     toggleCategory,
@@ -204,6 +205,11 @@ export default function PreferenceScreen() {
 
   const handleStart = () => {
     markPreferencesSet();
+
+    if (route.params?.returnToPlanning) {
+      navigation.goBack();
+      return;
+    }
 
     const parent = navigation.getParent?.();
     if (parent) {
@@ -455,8 +461,8 @@ export default function PreferenceScreen() {
               end={{ x: 1, y: 0 }}
               style={styles.startButton}
             >
-              <Text style={styles.startButtonText}>开始探索</Text>
-              <Ionicons name="arrow-forward" size={20} color="#FFF" />
+              <Text style={styles.startButtonText}>{route.params?.returnToPlanning ? '保存并返回规划' : '开始探索'}</Text>
+              <Ionicons name={route.params?.returnToPlanning ? 'checkmark' : 'arrow-forward'} size={20} color="#FFF" />
             </LinearGradient>
           </TouchableOpacity>
         </View>

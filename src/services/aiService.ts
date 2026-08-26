@@ -50,7 +50,7 @@ export async function requestPlanningIntent(
         .slice(-20)
         .map(message => ({ role: message.role, content: message.text })),
     }),
-  }, 45_000);
+  }, 80_000);
   return validatePlanIntent(result);
 }
 

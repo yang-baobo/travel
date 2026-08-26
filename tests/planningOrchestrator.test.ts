@@ -10,9 +10,12 @@ describe('Planning Orchestrator', () => {
     const restaurant = place('amap:restaurant', 'restaurant');
     let matrixNodeIds: string[] = [];
     let optimizedIds: string[] = [];
+    const placeKeywords: Record<string, string | undefined> = {};
     const orchestrator = createPlanningOrchestrator({
       getIntent: async () => intent(request),
-      searchPlaces: async category => ({
+      searchPlaces: async (category, keyword) => {
+        placeKeywords[category] = keyword;
+        return ({
         city: { name: '北京', adcode: '110000', citycode: '010' },
         category,
         source: 'amap',
@@ -21,7 +24,8 @@ describe('Planning Orchestrator', () => {
         total: category === 'restaurant' ? 1 : 0,
         hasMore: false,
         items: category === 'restaurant' ? [restaurant] : [],
-      }),
+        });
+      },
       searchHotels: async () => { throw new Error('hotel should not be queried'); },
       buildMatrix: async nodes => {
         matrixNodeIds = nodes.map(node => node.id);
@@ -64,6 +68,7 @@ describe('Planning Orchestrator', () => {
     const result = await orchestrator.plan({ sessionId: 'planning-test', request, messages: [] });
     assert.deepEqual(matrixNodeIds.sort(), ['amap:restaurant', 'amap:selected'].sort());
     assert.deepEqual(optimizedIds.sort(), ['amap:restaurant', 'amap:selected'].sort());
+    assert.equal(placeKeywords.attraction, '博物馆');
     assert.equal(result.draft?.providers.includes('amap'), true);
     assert.equal(result.draft?.providers.includes('google-or-tools'), true);
     assert.equal(result.draft?.days[0].stops[0].place.source, 'amap');

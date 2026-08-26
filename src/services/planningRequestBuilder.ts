@@ -81,6 +81,46 @@ export function buildPlanningRequest(input: {
     pace: parsePlannerPace(input.params.pace),
     candidates: input.candidates.map(toPlanningCandidate),
     preferenceSnapshot: {
+      hasSetPreferences: preference.hasSetPreferences,
+      selectedCategories: [...preference.selectedCategories],
+      cuisines: [...preference.cuisinePrefs],
+      needHotel: preference.needHotel,
+      hotelLevel: preference.hotelLevelPref,
+      hotelZone: preference.hotelZonePref,
+      hotelPriceRange: { ...preference.hotelPriceRange },
+      hotelAmenities: [...preference.hotelAmenityPrefs],
+      needLunch: preference.needLunch,
+      needDinner: preference.needDinner,
+      lunchLatestEndTime: preference.lunchLatestEndTime,
+      dinnerLatestEndTime: preference.dinnerLatestEndTime,
+      transportPreference: preference.transportPref,
+      transportRule: {
+        walkMaxKm: preference.transportRule.walkMaxKm,
+        defaultMode: preference.transportRule.defaultMode,
+        maxTransitMinutes: preference.transportRule.maxTransitMinutes,
+        maxWalkToStationKm: preference.transportRule.maxWalkToStationKm,
+      },
+      travelStartDate: preference.travelStartDate,
+      travelReturnDate: preference.travelReturnDate,
+      dailyStartTime: preference.dailyStartTime,
+      dailyEndTime: preference.dailyEndTime,
+      elderlyMode: preference.elderlyMode,
+    },
+    hardConstraints: JSON.parse(JSON.stringify(hardConstraints)),
+  };
+}
+
+export function refreshPlanningRequestPreferences(request: PlanningRequest): PlanningRequest {
+  const preference = usePreferenceStore.getState();
+  const blindBox = useBlindBoxStore.getState();
+  const hardConstraints = blindBox.confirmedProfile?.hardConstraints
+    || blindBox.draftProfile?.hardConstraints
+    || EMPTY_HARD_CONSTRAINTS;
+  return {
+    ...request,
+    preferenceSnapshot: {
+      ...request.preferenceSnapshot,
+      hasSetPreferences: preference.hasSetPreferences,
       selectedCategories: [...preference.selectedCategories],
       cuisines: [...preference.cuisinePrefs],
       needHotel: preference.needHotel,

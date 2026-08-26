@@ -6,6 +6,27 @@ import type { TravelPlace, TravelRouteSegment } from './travel';
 export type PlanningInputMethod = 'text' | 'asr' | 'realtime';
 export type PlanningPace = 'relaxed' | 'standard' | 'packed';
 export type PlanIntentProvider = 'remote_glm' | 'local_fallback' | 'unavailable';
+export type PlanningEntryMode = 'selected_places' | 'chat' | 'realtime';
+export type PlanningRequirementKey =
+  | 'city'
+  | 'travel_time'
+  | 'people'
+  | 'budget'
+  | 'pace'
+  | 'preferences'
+  | 'transport'
+  | 'stay_meals'
+  | 'constraints'
+  | 'attractions';
+
+export interface PlanningRequirementProgress {
+  key: PlanningRequirementKey;
+  label: string;
+  required: boolean;
+  status: 'missing' | 'confirmed';
+  summary: string;
+  source: PlanningInputMethod | 'preference_settings' | 'home_selection' | null;
+}
 
 export interface PlanningCandidatePlace {
   source: TravelPlace['source'];
@@ -18,6 +39,7 @@ export interface PlanningCandidatePlace {
 }
 
 export interface PlanningPreferenceSnapshot {
+  hasSetPreferences: boolean;
   selectedCategories: string[];
   cuisines: string[];
   needHotel: boolean;
@@ -142,6 +164,7 @@ export interface PlanningMessage {
 
 export type PlanningSessionStatus =
   | 'idle'
+  | 'collecting'
   | 'understanding'
   | 'needs_clarification'
   | 'querying_places'
@@ -161,8 +184,10 @@ export interface DraftPatchPreview {
 
 export interface PlanningSession {
   id: string;
+  entryMode: PlanningEntryMode;
   status: PlanningSessionStatus;
   request: PlanningRequest;
+  requirements: PlanningRequirementProgress[];
   messages: PlanningMessage[];
   planIntent: PlanIntent | null;
   draft: TripPlanDraft | null;

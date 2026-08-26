@@ -27,6 +27,7 @@ import type {
   TravelRouteSegment,
 } from '../types/travel';
 import { buildLocalPlanIntent } from '../utils/planIntentSchema';
+import { categories } from '../data/categories';
 
 export interface PlanningProgress {
   status: Extract<PlanningSessionStatus, 'understanding' | 'querying_places' | 'calculating_transport'>;
@@ -68,6 +69,27 @@ function addDays(date: string, amount: number): string {
   const value = new Date(`${date}T12:00:00`);
   value.setDate(value.getDate() + amount);
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
+function attractionKeyword(request: PlanningRequest): string {
+  const names = request.preferenceSnapshot.selectedCategories.map(id => categories.find(item => item.id === id)?.name || id);
+  const combined = `${names.join(' ')} ${request.userInput}`;
+  if (/历史|文化|建筑|博物/.test(combined)) return '博物馆';
+  if (/艺术|展览|美术/.test(combined)) return '美术馆';
+  if (/自然|生态|公园|户外/.test(combined)) return '公园';
+  if (/亲子|乐园/.test(combined)) return '亲子景点';
+  if (/购物|科技/.test(combined)) return '购物中心';
+  if (/摄影|打卡/.test(combined)) return '北京景点';
+  return '';
+}
+
+function restaurantKeyword(request: PlanningRequest): string {
+  if (request.preferenceSnapshot.cuisines.length) return request.preferenceSnapshot.cuisines[0];
+  if (/咖啡/.test(request.userInput)) return '咖啡馆';
+  if (/素食/.test(request.userInput)) return '素食';
+  if (/火锅/.test(request.userInput)) return '火锅';
+  if (/北京菜|北京美食|烤鸭/.test(request.userInput)) return '北京菜';
+  return '';
 }
 
 function clockToMinutes(value: string, fallback: number): number {
@@ -285,9 +307,12 @@ export function createPlanningOrchestrator(
       const targetRestaurants = Math.min(3, Math.max(1, request.days));
       const shouldDiscover = request.mode !== 'self';
       const attractionPromise = shouldDiscover
-        ? deps.searchPlaces('attraction', '', 1, targetAttractions)
+        ? deps.searchPlaces('attraction', attractionKeyword(request), 1, targetAttractions)
         : Promise.resolve(null);
-      const restaurantPromise = deps.searchPlaces('restaurant', '', 1, targetRestaurants);
+      const shouldArrangeMeals = request.preferenceSnapshot.needLunch || request.preferenceSnapshot.needDinner;
+      const restaurantPromise = shouldArrangeMeals
+        ? deps.searchPlaces('restaurant', restaurantKeyword(request), 1, targetRestaurants)
+        : Promise.resolve(null);
       const hotelBudget = request.totalBudget
         ? Math.max(1, Math.floor(request.totalBudget * 0.45 / Math.max(1, request.days - 1)))
         : request.preferenceSnapshot.hotelPriceRange.max;

@@ -19,6 +19,7 @@ import SettlementScreen from '../screens/cart/SettlementScreen';
 import LivePlacesScreen from '../screens/explore/LivePlacesScreen';
 import LivePlaceDetailScreen from '../screens/explore/LivePlaceDetailScreen';
 import LiveItineraryScreen from '../screens/explore/LiveItineraryScreen';
+import AIPlanningScreen from '../screens/explore/AIPlanningScreen';
 import TripProfileScreen from '../screens/blind-box/TripProfileScreen';
 import BlindBoxScreen from '../screens/blind-box/BlindBoxScreen';
 
@@ -50,6 +51,11 @@ export default function ExploreStack() {
         name="LiveItinerary"
         component={LiveItineraryScreen}
         options={{ title: '实时路线' }}
+      />
+      <Stack.Screen
+        name="AIPlanning"
+        component={AIPlanningScreen}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="ExploreMain"
