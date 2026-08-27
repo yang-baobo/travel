@@ -438,7 +438,6 @@ export type AuthStackParamList = {
 export type ExploreStackParamList = {
   Home: undefined;
   AIPlanning: { launchRealtime?: boolean } | undefined;
-  TripProfile: undefined;
   BlindBox: undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
   LivePlaceDetail: { placeId: string };
@@ -462,7 +461,6 @@ export type ExploreStackParamList = {
 // 自定义 Tab
 export type CustomStackParamList = {
   CustomHome: undefined;
-  TripProfile: undefined;
   BlindBox: undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
   LivePlaceDetail: { placeId: string };
@@ -488,7 +486,6 @@ export type OrderStackParamList = {
 // 个人 Tab
 export type ProfileStackParamList = {
   Profile: undefined;
-  TripProfile: undefined;
   Preference: undefined;
   Favorites: undefined;
 };

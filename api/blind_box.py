@@ -190,12 +190,14 @@ def _stable_noise(seed: str, candidate_id: str) -> float:
     return int.from_bytes(digest[:4], "big") / 2**32
 
 
-def _provider_candidates(profile: TripProfile) -> list[CandidatePlace]:
-    categories: list[ContentCategory] = [
-        category
-        for category, priority in profile.content_priorities.model_dump().items()
-        if priority != "none"
-    ]
+def _provider_candidates(profile: TripProfile, blind_box_type: BlindBoxType = "preference") -> list[CandidatePlace]:
+    priorities = profile.content_priorities.model_dump()
+    # 偏航盲盒：从所有类别获取候选，包括用户设为"不安排"的，用于跳出舒适区
+    categories: list[ContentCategory] = (
+        [c for c in priorities if priorities[c] != "none"]
+        if blind_box_type == "preference"
+        else list(priorities.keys())
+    )
     items: list[CandidatePlace] = []
     seen: set[str] = set()
     for category in categories:
@@ -307,8 +309,18 @@ def _score(
     route_score = 0 if insertion is None else max(-20, 12 - insertion[2] / 2)
     rating = (candidate.rating or 0) * 1.5
     novelty = _stable_noise(request.request_id or "blind-box", candidate.id) * 7
+
     if request.type == "detour":
-        return route_score * 2 + variety + PRIORITY_SCORE[priorities[candidate.category]] + rating + novelty - not_preferred
+        # 偏航盲盒：跳出固有偏好，推荐新鲜体验
+        # - 不奖励偏好匹配（preference_fit 忽略）
+        # - 内容优先级反向奖励：优先级越低的类别新鲜度越高
+        priority_value = PRIORITY_SCORE[priorities[candidate.category]]
+        surprise_bonus = max(0, 20 - priority_value)  # 低/无优先级反而加分（跳出舒适区）
+        # - 高权重给多样性和新鲜度
+        # - 评分高（随机性加分，让结果不可预测）
+        high_novelty = _stable_noise(request.request_id or "blind-box-detour", candidate.id) * 12
+        return high_novelty + surprise_bonus + variety * 3 + rating + novelty - not_preferred
+
     return PRIORITY_SCORE[priorities[candidate.category]] + preference_fit * 2 + variety + route_score + rating + novelty - not_preferred
 
 
@@ -356,12 +368,7 @@ def generate_blind_box(payload: BlindBoxGenerateRequest) -> dict[str, Any]:
             ["该时间段超过了整趟旅行的夜间活动限制"],
             ["把本次盲盒调整到 19:00 前结束"],
         )
-    if request.type == "detour" and len(payload.day_itinerary) < 2:
-        return _failure(
-            {**empty_counts, "route": 1},
-            ["偏航盲盒需要当前路线中至少有两个地点"],
-            ["先在实时路线中加入两个地点", "改用偏好盲盒"],
-        )
+    # 偏航盲盒：无需任何行程地点，即时生成跳出偏好的新鲜推荐
 
     effective_limit = min(
         budget.remaining_trip_budget,
@@ -369,7 +376,7 @@ def generate_blind_box(payload: BlindBoxGenerateRequest) -> dict[str, Any]:
         request.budget_total,
     )
     constraints = _merged_constraints(profile, payload.group_constraints)
-    candidates = payload.candidate_places or _provider_candidates(profile)
+    candidates = payload.candidate_places or _provider_candidates(profile, request.type)
     excluded = set(request.exclude_candidate_ids)
     counts = {**empty_counts, "data_uncertainty": 0}
     ranked: list[tuple[float, CandidatePlace, tuple[int, float, int, int] | None]] = []
@@ -380,8 +387,12 @@ def generate_blind_box(payload: BlindBoxGenerateRequest) -> dict[str, Any]:
         if candidate.id in excluded:
             continue
         if priorities[candidate.category] == "none":
-            counts["content_priority_none"] += 1
-            continue
+            if request.type == "detour":
+                # 偏航盲盒：主动引入用户未安排的类别作为新鲜体验
+                pass
+            else:
+                counts["content_priority_none"] += 1
+                continue
         searchable = " ".join(
             [candidate.name, candidate.subcategory, candidate.type_name, *candidate.risk_tags, *candidate.food_tags, *candidate.allergen_tags]
         ).lower()
@@ -402,17 +413,25 @@ def generate_blind_box(payload: BlindBoxGenerateRequest) -> dict[str, Any]:
         if candidate.price > effective_limit:
             counts["budget"] += 1
             continue
-        insertion = _best_insertion(candidate, payload.day_itinerary)
-        travel_allowance = insertion[2] if insertion else 0
+
+        if request.type == "detour":
+            # 偏航盲盒：不检查路线插入、不检查绕路、不检查 max_distance_km
+            insertion = None
+            travel_allowance = 0
+        else:
+            insertion = _best_insertion(candidate, payload.day_itinerary)
+            travel_allowance = insertion[2] if insertion else 0
+
         if candidate.recommended_duration_minutes + travel_allowance + 10 > slot_minutes:
             counts["time"] += 1
             continue
-        if insertion and request.max_distance_km is not None and insertion[1] > request.max_distance_km:
-            counts["route"] += 1
-            continue
-        if insertion and insertion[2] > request.max_detour_minutes:
-            counts["route"] += 1
-            continue
+        if request.type != "detour":
+            if insertion and request.max_distance_km is not None and insertion[1] > request.max_distance_km:
+                counts["route"] += 1
+                continue
+            if insertion and insertion[2] > request.max_detour_minutes:
+                counts["route"] += 1
+                continue
         ranked.append(
             (
                 _score(candidate, profile, request, payload.day_itinerary, insertion),
@@ -431,39 +450,52 @@ def generate_blind_box(payload: BlindBoxGenerateRequest) -> dict[str, Any]:
     walking_minutes = 0
     route_verified = False
 
+    is_detour = request.type == "detour"
     for _, candidate, insertion, price_estimated in ranked[:6]:
-        candidate_detour = insertion[2] if insertion else 0
-        candidate_transport_cost = 0.0
-        candidate_walk = insertion[3] if insertion else 0
-        verified = False
-        if insertion:
-            previous = payload.day_itinerary[insertion[0]]
-            following = payload.day_itinerary[insertion[0] + 1]
-            leg_one = _get_route(previous, candidate)
-            leg_two = _get_route(candidate, following)
-            direct = _get_route(previous, following)
-            if leg_one and leg_two and direct:
-                candidate_detour = max(0, leg_one[0] + leg_two[0] - direct[0])
-                candidate_transport_cost = max(0.0, leg_one[1] + leg_two[1] - direct[1])
-                candidate_walk = max(leg_one[2], leg_two[2])
-                verified = True
-        total_cost = candidate.price + candidate_transport_cost
-        if candidate_detour > request.max_detour_minutes:
-            counts["route"] += 1
-            continue
-        if candidate_walk > constraints["max_segment"]:
-            counts["safety_allergy_group"] += 1
-            continue
-        if total_cost > effective_limit:
-            counts["budget"] += 1
-            continue
+        if is_detour:
+            # 偏航盲盒：跳过路线校检，仅做基本预算复核
+            if candidate.price > effective_limit:
+                counts["budget"] += 1
+                continue
+        else:
+            candidate_detour = insertion[2] if insertion else 0
+            candidate_transport_cost = 0.0
+            candidate_walk = insertion[3] if insertion else 0
+            verified = False
+            if insertion:
+                previous = payload.day_itinerary[insertion[0]]
+                following = payload.day_itinerary[insertion[0] + 1]
+                leg_one = _get_route(previous, candidate)
+                leg_two = _get_route(candidate, following)
+                direct = _get_route(previous, following)
+                if leg_one and leg_two and direct:
+                    candidate_detour = max(0, leg_one[0] + leg_two[0] - direct[0])
+                    candidate_transport_cost = max(0.0, leg_one[1] + leg_two[1] - direct[1])
+                    candidate_walk = max(leg_one[2], leg_two[2])
+                    verified = True
+            total_cost = candidate.price + candidate_transport_cost
+            if candidate_detour > request.max_detour_minutes:
+                counts["route"] += 1
+                continue
+            if candidate_walk > constraints["max_segment"]:
+                counts["safety_allergy_group"] += 1
+                continue
+            if total_cost > effective_limit:
+                counts["budget"] += 1
+                continue
         selected = candidate
         selected_insertion = insertion
         selected_price_estimated = price_estimated
-        detour_minutes = candidate_detour
-        added_transport_cost = candidate_transport_cost
-        walking_minutes = candidate_walk
-        route_verified = verified
+        if is_detour:
+            detour_minutes = 0
+            added_transport_cost = 0.0
+            walking_minutes = 0
+            route_verified = True
+        else:
+            detour_minutes = candidate_detour
+            added_transport_cost = candidate_transport_cost
+            walking_minutes = candidate_walk
+            route_verified = verified
         break
 
     if selected is None:
@@ -476,10 +508,14 @@ def generate_blind_box(payload: BlindBoxGenerateRequest) -> dict[str, Any]:
             reasons.append("候选项目超出最大绕路范围")
         if counts["safety_allergy_group"]:
             reasons.append("候选项目无法证明满足安全、过敏或行动限制")
+        if is_detour:
+            adjustments = ["增加可用时间", "适当提高本次预算", "放宽全局硬性约束"]
+        else:
+            adjustments = ["增加可用时间", "缩小到当前路线附近", "适当提高本次预算"]
         return _failure(
             counts,
             reasons or ["当前没有符合全部条件的真实候选项目"],
-            ["增加可用时间", "缩小到当前路线附近", "适当提高本次预算"],
+            adjustments,
         )
 
     total_cost = round(selected.price + added_transport_cost, 2)
@@ -508,7 +544,7 @@ def generate_blind_box(payload: BlindBoxGenerateRequest) -> dict[str, Any]:
         else "当前路线尚无同类项目，本次加入用于增加内容多样性"
     )
     title = selected.name if request.reveal_now else (
-        f"一段不超过 {request.max_detour_minutes} 分钟的偏航盲盒"
+        f"一次跳出舒适区的新奇发现"
         if request.type == "detour"
         else "一份贴近你偏好的北京盲盒"
     )
@@ -519,9 +555,17 @@ def generate_blind_box(payload: BlindBoxGenerateRequest) -> dict[str, Any]:
         "area_hint": selected.district or "当前路线附近",
         "budget": f"预计 ¥{total_cost:g}",
         "effort": "低强度" if walking_minutes <= 15 else "中等强度",
-        "walking": f"预计单段步行不超过 {walking_minutes} 分钟" if walking_minutes else "步行量待路线复核",
-        "detour": f"预计增加 {detour_minutes} 分钟" if selected_insertion else "暂无完整路线，绕路待核实",
-        "reason": f"匹配你设置的 {priority_applied} 优先级与偏好，同时保留受约束的惊喜",
+        "walking": "偏航盲盒以探索新奇为主，步行量请出发前自行评估" if is_detour and not walking_minutes else (
+            f"预计单段步行不超过 {walking_minutes} 分钟" if walking_minutes else "步行量待路线复核"
+        ),
+        "detour": "新鲜发现，无需绕路" if is_detour else (
+            f"预计增加 {detour_minutes} 分钟" if selected_insertion else "暂无完整路线，绕路待核实"
+        ),
+        "reason": (
+            "跳出你原有的偏好设定，推荐一份有边界的全新体验"
+            if is_detour else
+            f"匹配你设置的 {priority_applied} 优先级与偏好，同时保留受约束的惊喜"
+        ),
         "safety_notes": safety_notes,
         "data_warnings": data_warnings,
         "reservation_required": selected.booking_required,

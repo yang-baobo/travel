@@ -354,7 +354,7 @@ const styles = StyleSheet.create({
   busyCard: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14, padding: 17, borderRadius: 22, backgroundColor: '#FFF' },
   busyTitle: { color: '#173B35', fontSize: 13, fontWeight: '900' },
   busyText: { color: '#778985', fontSize: 9, marginTop: 3 },
-  bottomBar: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 82, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 12, borderTopWidth: 1, borderColor: '#DDE7E3', backgroundColor: 'rgba(255,255,255,0.97)' },
+  bottomBar: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 8, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 12, borderTopWidth: 1, borderColor: '#DDE7E3', backgroundColor: 'rgba(255,255,255,0.97)' },
   bottomCopy: { flex: 1 },
   bottomLabel: { color: '#8A9A96', fontSize: 8, fontWeight: '800' },
   bottomProgress: { color: '#173B35', fontSize: 12, fontWeight: '900', marginTop: 2 },

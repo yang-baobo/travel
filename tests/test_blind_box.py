@@ -110,7 +110,7 @@ class BlindBoxTest(unittest.TestCase):
 
     def test_rejects_excessive_walking_after_route_check(self):
         document = base_document()
-        document["blind_box_request"]["type"] = "detour"
+        document["blind_box_request"]["type"] = "preference"
         document["trip_profile"]["hard_constraints"]["max_walking_minutes_per_segment"] = 10
         document["group_constraints"]["max_walking_minutes_per_segment"] = 10
         document["day_itinerary"] = [
@@ -122,6 +122,16 @@ class BlindBoxTest(unittest.TestCase):
             result = generate_blind_box(BlindBoxGenerateRequest.model_validate(document))
         self.assertEqual(result["status"], "no_feasible_option")
         self.assertEqual(result["rejection_counts"]["safety_allergy_group"], 1)
+
+    def test_detour_skips_walking_and_route_checks(self):
+        """偏航盲盒跳过步行/路线检查，应正常返回 success"""
+        document = base_document()
+        document["blind_box_request"]["type"] = "detour"
+        document["trip_profile"]["hard_constraints"]["max_walking_minutes_per_segment"] = 10
+        document["group_constraints"]["max_walking_minutes_per_segment"] = 10
+        document["candidate_places"] = [candidate()]
+        result = generate_blind_box(BlindBoxGenerateRequest.model_validate(document))
+        self.assertEqual(result["status"], "success")
 
     def test_replace_excludes_previous_candidate(self):
         document = base_document()

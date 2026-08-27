@@ -29,10 +29,8 @@ export const flowTabScreenOptions = {
   tabBarInactiveTintColor: '#91A39F',
   tabBarHideOnKeyboard: true,
   tabBarStyle: {
-    position: 'absolute' as const,
-    left: 14,
-    right: 14,
-    bottom: 10,
+    marginHorizontal: 14,
+    marginBottom: 10,
     height: 68,
     paddingTop: 8,
     paddingBottom: 8,

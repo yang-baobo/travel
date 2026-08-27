@@ -47,17 +47,6 @@ export default function ProfileScreen() {
 
         {/* Menu Items */}
         <View style={styles.menuSection}>
-          <TouchableOpacity style={styles.prefItem} activeOpacity={0.7} onPress={() => navigation.navigate('TripProfile')}>
-            <View style={[styles.prefIconWrap, { backgroundColor: '#6E58A5' }]}>
-              <Ionicons name="shield-checkmark" size={scaleIcon(22)} color="#FFF" />
-            </View>
-            <View style={{ flex: 1, marginLeft: spacing.lg }}>
-              <Text style={[typography.body, { fontWeight: '600' }]}>盲盒安全设置</Text>
-              <Text style={typography.caption}>过敏、雷点、步行和夜间限制</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={scaleIcon(18)} color={colors.disabled} />
-          </TouchableOpacity>
-
           {/* 偏好设置 - 独立重要项 */}
           <TouchableOpacity style={styles.prefItem} activeOpacity={0.7} onPress={() => navigation.navigate('Preference')}>
             <View style={styles.prefIconWrap}>

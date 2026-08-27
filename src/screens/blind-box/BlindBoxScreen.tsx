@@ -33,8 +33,6 @@ const DEFAULT_CONTROLS: BlindBoxControls = {
 
 export default function BlindBoxScreen() {
   const navigation = useNavigation<any>();
-  const setupStatus = useBlindBoxStore(state => state.setupStatus);
-  const profileVersion = useBlindBoxStore(state => state.profileVersion);
   const profile = useBlindBoxStore(state => state.confirmedProfile);
   const result = useBlindBoxStore(state => state.result);
   const revealed = useBlindBoxStore(state => state.revealed);
@@ -46,6 +44,7 @@ export default function BlindBoxScreen() {
   const cuisinePrefs = usePreferenceStore(state => state.cuisinePrefs);
   const hotelAmenityPrefs = usePreferenceStore(state => state.hotelAmenityPrefs);
   const fatigueLevel = usePreferenceStore(state => state.transportRule.fatigueLevel);
+  const hasSetPreferences = usePreferenceStore(state => state.hasSetPreferences);
   const platformPreferences = useMemo(() => buildBlindBoxPreferences({
     selectedCategories,
     cuisinePrefs,
@@ -53,7 +52,15 @@ export default function BlindBoxScreen() {
     fatigueLevel,
   }), [selectedCategories, cuisinePrefs, hotelAmenityPrefs, fatigueLevel]);
 
-  const goPreferenceSetup = () => {
+  const [controls, setControls] = useState(DEFAULT_CONTROLS);
+  const [loading, setLoading] = useState(false);
+  // 累积「换一个」时已排除过的候选 ID，避免循环返回已拒绝的结果
+  const [excludedCandidateIds, setExcludedCandidateIds] = useState<string[]>([]);
+  const routeSummary = useMemo(() => (
+    `${itinerary.length} 个地点`
+  ), [itinerary.length]);
+
+  const goPreference = () => {
     try {
       const parent = navigation.getParent?.();
       if (parent) {
@@ -62,33 +69,15 @@ export default function BlindBoxScreen() {
       }
       navigation.navigate('Preference');
     } catch {
-      navigation.navigate('TripProfile');
+      navigation.navigate('Preference');
     }
   };
 
-  const [controls, setControls] = useState(DEFAULT_CONTROLS);
-  const [loading, setLoading] = useState(false);
-  const routeSummary = useMemo(() => (
-    itinerary.length >= 2 ? `${itinerary.length} 个地点，偏航会自动寻找最顺路的插入位置` : `${itinerary.length} 个地点`
-  ), [itinerary.length]);
-
   const confirmDefaultProfile = useBlindBoxStore(state => state.confirmProfile);
 
+  // 首次进入时自动确认默认profile，不展示盲盒安全设置空状态
   if (!profile) {
-    return (
-      <View style={styles.setupEmpty}>
-        <View style={styles.lockIcon}><Ionicons name="shield-outline" size={44} color={colors.primary} /></View>
-        <Text style={styles.emptyTitle}>先完成盲盒安全设置</Text>
-        <Text style={styles.emptyText}>安全设置已并入偏好设置：预算、过敏、雷点和行动限制一次性配好，兴趣会自动沿用原偏好。</Text>
-        <TouchableOpacity style={styles.primaryButton} onPress={goPreferenceSetup}>
-          <Text style={styles.primaryButtonText}>去偏好设置</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.secondaryButton} onPress={() => confirmDefaultProfile()}>
-          <Text style={styles.secondaryButtonText}>使用安全默认值开启</Text>
-        </TouchableOpacity>
-        <Text style={styles.defaultHint}>默认值：总预算 ¥3000 · 每天步行≤120分钟 · 单段≤30分钟 · 不含夜间限制</Text>
-      </View>
-    );
+    confirmDefaultProfile();
   }
 
   const runGeneration = async (replace = false) => {
@@ -96,19 +85,29 @@ export default function BlindBoxScreen() {
       Alert.alert('时间格式不正确', '请按照 15:00 这样的格式填写。');
       return;
     }
-    if (controls.type === 'detour' && itinerary.length < 2) {
-      Alert.alert('路线信息不足', '偏航盲盒需要当前路线中至少有两个地点。你也可以先使用偏好盲盒。');
+    if (!hasSetPreferences) {
+      Alert.alert('偏好未设置', '请先完成偏好设置，再生成盲盒。', [
+        { text: '去设置', onPress: goPreference },
+        { text: '取消', style: 'cancel' },
+      ]);
       return;
     }
     setLoading(true);
     try {
-      const excluded = replace && result?.status === 'success'
-        ? [result.system_payload.selected_candidate_id]
+      // 「换一个」时累积排除所有已拒绝的候选，避免循环返回同一结果
+      const currentId = result?.status === 'success' ? result.system_payload.selected_candidate_id : null;
+      const updatedExcluded = replace && currentId
+        ? [...excludedCandidateIds, currentId]
         : [];
+      if (!replace) {
+        setExcludedCandidateIds([]);
+      } else {
+        setExcludedCandidateIds(updatedExcluded);
+      }
       const next = await generateBlindBox({
         ...profile,
         preferences: platformPreferences,
-      }, controls, itinerary, excluded);
+      }, controls, itinerary, updatedExcluded);
       setResult(next);
     } catch (error) {
       Alert.alert('盲盒生成失败', error instanceof Error ? error.message : '请稍后重试');
@@ -136,13 +135,20 @@ export default function BlindBoxScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <View style={styles.profileStrip}>
-        <View style={styles.profileIcon}><Ionicons name="checkmark" size={18} color="#FFF" /></View>
-        <View style={styles.profileCopy}>
-          <Text style={styles.profileTitle}>已读取盲盒安全设置 v{profileVersion}{setupStatus === 'draft' ? '（草稿修改尚未生效）' : ''}</Text>
-          <Text style={styles.profileText}>总预算 ¥{profile.totalTripBudget} · 单段步行≤{profile.hardConstraints.maxWalkingMinutesPerSegment}分钟 · 原偏好：{platformPreferences.slice(0, 3).join('、') || '尚未设置'}</Text>
-        </View>
-        <TouchableOpacity onPress={() => navigation.navigate('TripProfile')}><Text style={styles.editText}>编辑</Text></TouchableOpacity>
+
+      {/* 偏好状态条 */}
+      <View style={styles.preferenceStrip}>
+        <Ionicons
+          name={hasSetPreferences ? "checkmark-circle" : "alert-circle"}
+          size={18}
+          color={hasSetPreferences ? colors.successGreen : colors.warningYellow}
+        />
+        <Text style={styles.preferenceStripText}>
+          {hasSetPreferences ? '偏好设置已配置' : '偏好设置未配置'}
+        </Text>
+        <TouchableOpacity onPress={goPreference}>
+          <Text style={styles.preferenceStripEdit}>编辑</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.hero}>
@@ -182,9 +188,9 @@ export default function BlindBoxScreen() {
           />
           <TypeOption
             active={controls.type === 'detour'}
-            icon="navigate-outline"
+            icon="compass-outline"
             title="偏航盲盒"
-            subtitle="在当前路线旁值得绕一点路"
+            subtitle="跳出固有偏好，发现新鲜体验"
             onPress={() => setControls(state => ({ ...state, type: 'detour' }))}
           />
         </View>
@@ -238,6 +244,7 @@ export default function BlindBoxScreen() {
               onReveal={reveal}
               onReplace={() => void runGeneration(true)}
               onAdd={addSelected}
+              loading={loading}
             />
           ) : result.status === 'no_feasible_option' ? (
             <View style={[styles.resultCard, styles.noOptionCard]}>
@@ -287,12 +294,13 @@ function NumberInput({ label, value, onChange, prefix, suffix }: { label: string
   );
 }
 
-function SuccessCard({ result, revealed, onReveal, onReplace, onAdd }: {
+function SuccessCard({ result, revealed, onReveal, onReplace, onAdd, loading }: {
   result: BlindBoxSuccessResult;
   revealed: boolean;
   onReveal: () => void;
   onReplace: () => void;
   onAdd: () => void;
+  loading: boolean;
 }) {
   const card = result.public_card;
   const candidate = result.system_payload.selected_candidate;
@@ -346,9 +354,19 @@ function SuccessCard({ result, revealed, onReveal, onReplace, onAdd }: {
             )}
           </>
         )}
-        <TouchableOpacity style={styles.replaceButton} onPress={onReplace}>
-          <Ionicons name="refresh-outline" size={18} color={colors.primary} />
-          <Text style={styles.replaceText}>换一个（保留全部硬性限制）</Text>
+        <TouchableOpacity
+          style={[styles.replaceButton, loading && styles.buttonDisabled]}
+          disabled={loading}
+          onPress={onReplace}
+        >
+          {loading ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Ionicons name="refresh-outline" size={18} color={colors.primary} />
+          )}
+          <Text style={styles.replaceText}>
+            {loading ? '正在换一个…' : '换一个（保留全部硬性限制）'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -376,12 +394,9 @@ function Notice({ icon, text, danger = false }: { icon: string; text: string; da
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.lg, paddingBottom: 56 },
-  profileStrip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E6F5F1', borderRadius: borderRadius.md, padding: spacing.md, marginBottom: spacing.md },
-  profileIcon: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.successGreen },
-  profileCopy: { flex: 1, marginLeft: spacing.sm },
-  profileTitle: { color: colors.primaryDark, fontSize: 12, fontWeight: '800' },
-  profileText: { color: colors.textSecondary, fontSize: 10, marginTop: 3 },
-  editText: { color: colors.primary, fontSize: 12, fontWeight: '700' },
+  preferenceStrip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E6F5F1', borderRadius: borderRadius.md, padding: spacing.md, marginBottom: spacing.md },
+  preferenceStripText: { flex: 1, color: colors.textPrimary, fontSize: 12, fontWeight: '600', marginLeft: spacing.sm },
+  preferenceStripEdit: { color: colors.primary, fontSize: 12, fontWeight: '700' },
   hero: { backgroundColor: '#0D463F', borderRadius: borderRadius.lg, padding: spacing.xl, marginBottom: spacing.md },
   sparkle: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#6E58A5', marginBottom: spacing.md },
   heroTitle: { color: '#FFF', fontSize: 22, fontWeight: '900', lineHeight: 30 },
@@ -445,13 +460,4 @@ const styles = StyleSheet.create({
   reasonItem: { color: colors.textPrimary, fontSize: 12, lineHeight: 20 },
   adjustTitle: { color: colors.primaryDark, fontSize: 13, fontWeight: '800', marginTop: spacing.lg, marginBottom: 4 },
   adjustItem: { color: colors.textSecondary, fontSize: 11, lineHeight: 18 },
-  setupEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 36, backgroundColor: colors.background },
-  lockIcon: { width: 84, height: 84, borderRadius: 42, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E6F5F1' },
-  emptyTitle: { color: colors.textPrimary, fontSize: 20, fontWeight: '900', marginTop: spacing.xl },
-  emptyText: { color: colors.textSecondary, fontSize: 13, lineHeight: 20, textAlign: 'center', marginTop: spacing.sm },
-  primaryButton: { backgroundColor: colors.primary, borderRadius: borderRadius.md, paddingVertical: 13, paddingHorizontal: spacing.xxl, marginTop: spacing.xl },
-  primaryButtonText: { color: '#FFF', fontSize: 14, fontWeight: '800' },
-  secondaryButton: { borderWidth: 1.5, borderColor: colors.primary, borderRadius: borderRadius.md, paddingVertical: 12, paddingHorizontal: spacing.xxl, marginTop: spacing.md },
-  secondaryButtonText: { color: colors.primary, fontSize: 13, fontWeight: '700' },
-  defaultHint: { color: colors.textSecondary, fontSize: 10, lineHeight: 16, textAlign: 'center', marginTop: spacing.lg },
 });

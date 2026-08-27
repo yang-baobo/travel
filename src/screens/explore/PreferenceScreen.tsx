@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { CommonActions, useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { colors } from '../../theme/colors';
 import { spacing, borderRadius } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
@@ -123,7 +123,6 @@ function formatDateLabel(dateStr: string): string {
 
 export default function PreferenceScreen() {
   const navigation = useNavigation<any>();
-  const route = useRoute<any>();
   const {
     selectedCategories,
     toggleCategory,
@@ -162,6 +161,7 @@ export default function PreferenceScreen() {
   const blindBoxDraft = useBlindBoxStore(state => state.draftProfile);
   const updateBlindBoxDraft = useBlindBoxStore(state => state.updateDraft);
   const updateBlindBoxHard = useBlindBoxStore(state => state.updateHardConstraints);
+  const setBlindBoxPriority = useBlindBoxStore(state => state.setContentPriority);
   const confirmBlindBoxProfile = useBlindBoxStore(state => state.confirmProfile);
 
   const [showHotelEdit, setShowHotelEdit] = useState(false);
@@ -205,27 +205,7 @@ export default function PreferenceScreen() {
 
   const handleStart = () => {
     markPreferencesSet();
-
-    if (route.params?.returnToPlanning) {
-      navigation.goBack();
-      return;
-    }
-
-    const parent = navigation.getParent?.();
-    if (parent) {
-      parent.navigate('探索', {
-        screen: 'ExploreMain',
-        params: { tab: 'attractions' },
-      });
-      return;
-    }
-
-    navigation.dispatch(
-      CommonActions.navigate({
-        name: 'ExploreMain',
-        params: { tab: 'attractions' },
-      })
-    );
+    navigation.goBack();
   };
 
   // 住宿偏好摘要文字
@@ -328,14 +308,39 @@ export default function PreferenceScreen() {
           </View>
         </View>
 
-        {/* 酒店偏好(摘要+修改) */}
+        {/* 内容优先级(独立区块) */}
         <View style={styles.section}>
-          <Text style={[typography.h3, styles.sectionTitle]}>住宿偏好</Text>
-          <TouchableOpacity style={styles.summaryCard} activeOpacity={0.7} onPress={() => setShowHotelEdit(true)}>
-            <Ionicons name="bed-outline" size={18} color={colors.primary} />
-            <Text style={[typography.bodySmall, { flex: 1 }]}>{hotelSummary}</Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-          </TouchableOpacity>
+          <Text style={[typography.h3, styles.sectionTitle]}>内容优先级</Text>
+          <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: spacing.sm }]}>
+            控制景点、美食、购物等各类内容在行程中的侧重比例
+          </Text>
+          {(['attraction', 'food', 'shopping', 'experience', 'rest'] as const).map(category => (
+            <View key={category} style={styles.priorityRow}>
+              <Text style={styles.priorityLabel}>
+                {category === 'attraction' ? '景点' : category === 'food' ? '美食' : category === 'shopping' ? '购物' : category === 'experience' ? '体验' : '休息'}
+              </Text>
+              <View style={styles.priorityOptions}>
+                {(['none', 'low', 'normal', 'priority'] as const).map(opt => {
+                  const active = blindBoxDraft.contentPriorities[category] === opt;
+                  return (
+                    <TouchableOpacity
+                      key={opt}
+                      style={[
+                        styles.priorityButton,
+                        active && styles.priorityButtonActive,
+                        opt === 'none' && active && styles.noneActive,
+                      ]}
+                      onPress={() => setBlindBoxPriority(category, opt)}
+                    >
+                      <Text style={[styles.priorityText, active && styles.priorityTextActive]}>
+                        {opt === 'none' ? '不安排' : opt === 'low' ? '较少' : opt === 'normal' ? '正常' : '优先'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          ))}
         </View>
 
         {/* 交通偏好(摘要+修改) */}
@@ -359,6 +364,16 @@ export default function PreferenceScreen() {
           <Text style={[typography.caption, { marginTop: spacing.xs, color: colors.textSecondary }]}>
             预算、过敏、雷点和行动限制是 AI 旅行盲盒的硬性边界，盲盒不会为了惊喜而突破
           </Text>
+        </View>
+
+        {/* 住宿偏好(摘要+修改) */}
+        <View style={styles.section}>
+          <Text style={[typography.h3, styles.sectionTitle]}>住宿偏好</Text>
+          <TouchableOpacity style={styles.summaryCard} activeOpacity={0.7} onPress={() => setShowHotelEdit(true)}>
+            <Ionicons name="bed-outline" size={18} color={colors.primary} />
+            <Text style={[typography.bodySmall, { flex: 1 }]}>{hotelSummary}</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+          </TouchableOpacity>
         </View>
 
         {/* 航班偏好(摘要+修改) */}
@@ -461,8 +476,8 @@ export default function PreferenceScreen() {
               end={{ x: 1, y: 0 }}
               style={styles.startButton}
             >
-              <Text style={styles.startButtonText}>{route.params?.returnToPlanning ? '保存并返回规划' : '开始探索'}</Text>
-              <Ionicons name={route.params?.returnToPlanning ? 'checkmark' : 'arrow-forward'} size={20} color="#FFF" />
+              <Text style={styles.startButtonText}>保存偏好设置</Text>
+              <Ionicons name="checkmark" size={20} color="#FFF" />
             </LinearGradient>
           </TouchableOpacity>
         </View>
@@ -895,13 +910,6 @@ export default function PreferenceScreen() {
                 <TouchableOpacity onPress={() => setShowBlindBoxEdit(false)}><Ionicons name="close" size={24} color={colors.textPrimary} /></TouchableOpacity>
               </View>
               <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.modalScrollContent}>
-                <Text style={styles.modalLabel}>总体旅行预算（元）</Text>
-                <TextInput
-                  style={styles.customInput}
-                  value={String(blindBoxDraft.totalTripBudget)}
-                  onChangeText={value => updateBlindBoxDraft({ totalTripBudget: Math.max(0, Number(value.replace(/\D/g, '')) || 0) })}
-                  keyboardType="number-pad"
-                />
 
                 <Text style={styles.modalLabel}>过敏与饮食禁忌（用、分隔）</Text>
                 <TextInput
@@ -1122,6 +1130,14 @@ const styles = StyleSheet.create({
   customInput: { borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, fontSize: 14, color: colors.textPrimary, marginTop: spacing.sm },
   rulePreview: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, backgroundColor: `${colors.primary}08`, borderRadius: borderRadius.md, padding: spacing.md, marginTop: spacing.lg },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  priorityRow: { marginBottom: spacing.md },
+  priorityLabel: { color: colors.textPrimary, fontSize: 13, fontWeight: '700', marginBottom: 7 },
+  priorityOptions: { flexDirection: 'row', gap: 6 },
+  priorityButton: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: borderRadius.sm, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
+  priorityButtonActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  noneActive: { backgroundColor: colors.priceRed, borderColor: colors.priceRed },
+  priorityText: { color: colors.textSecondary, fontSize: 11 },
+  priorityTextActive: { color: '#FFF', fontWeight: '700' },
   // 日期选择按钮
   datePickBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.surface, borderRadius: borderRadius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginTop: spacing.xs },
   datePickText: { flex: 1, fontSize: 14, fontWeight: '500', color: colors.textPrimary },
