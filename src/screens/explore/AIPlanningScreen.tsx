@@ -169,21 +169,6 @@ export default function AIPlanningScreen() {
           showsVerticalScrollIndicator={false}
         >
           <Animated.View style={{ opacity: intro, transform: [{ translateY: intro.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) }] }}>
-            <View style={styles.sectionHeader}><Text style={styles.sectionEyebrow}>THREE WAYS, ONE SESSION</Text><Text style={styles.sectionTitle}>选择这次怎么一起制定</Text></View>
-            <View style={styles.modeRow}>
-              {(Object.keys(MODE_COPY) as PlanningEntryMode[]).map(mode => {
-                const copy = MODE_COPY[mode];
-                const active = session.entryMode === mode;
-                return (
-                  <Pressable key={mode} onPress={() => changeMode(mode)} style={[styles.modeCard, active && styles.modeCardActive]}>
-                    <View style={[styles.modeIcon, active && styles.modeIconActive]}><Ionicons name={copy.icon as any} size={19} color={active ? '#FFF' : '#0E8E83'} /></View>
-                    <Text style={[styles.modeLabel, active && styles.modeLabelActive]}>{copy.label}</Text>
-                    <Text style={[styles.modeDetail, active && styles.modeDetailActive]}>{copy.detail}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
             <View style={[styles.preferenceCard, hasSetPreferences && styles.preferenceCardDone]}>
               <View style={styles.preferenceIcon}><Ionicons name={hasSetPreferences ? 'checkmark' : 'options-outline'} size={21} color={hasSetPreferences ? '#FFF' : '#0E8E83'} /></View>
               <View style={styles.preferenceCopy}>
@@ -248,7 +233,7 @@ export default function AIPlanningScreen() {
                   </Pressable>
                   <Pressable onPress={() => void submit()} disabled={!input.trim() || submitting} style={[styles.sendButton, (!input.trim() || submitting) && styles.disabled]}><Ionicons name="arrow-up" size={19} color="#FFF" /></Pressable>
                 </View>
-                <Pressable onPress={() => setRealtimeVisible(true)} style={styles.callInline}><Ionicons name="call-outline" size={17} color="#0B7B72" /><Text style={styles.callInlineText}>改用实时电话继续补充</Text></Pressable>
+                <Pressable onPress={() => setRealtimeVisible(true)} style={styles.callInline}><Ionicons name="call-outline" size={20} color="#FFF" /><Text style={styles.callInlineText}>实时通话</Text></Pressable>
               </View>
             ) : null}
 
@@ -349,8 +334,8 @@ const styles = StyleSheet.create({
   composerButton: { width: 44, height: 44, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E9F6F3' },
   composerButtonLive: { backgroundColor: '#CFECE6' },
   sendButton: { width: 44, height: 44, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0E9F93' },
-  callInline: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 12, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 14, backgroundColor: '#EFF7F5' },
-  callInlineText: { color: '#0B7B72', fontSize: 10, fontWeight: '800' },
+  callInline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 16, marginHorizontal: 16, paddingVertical: 14, borderRadius: 16, backgroundColor: '#0E9F93' },
+  callInlineText: { color: '#FFF', fontSize: 15, fontWeight: '900' },
   busyCard: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14, padding: 17, borderRadius: 22, backgroundColor: '#FFF' },
   busyTitle: { color: '#173B35', fontSize: 13, fontWeight: '900' },
   busyText: { color: '#778985', fontSize: 9, marginTop: 3 },

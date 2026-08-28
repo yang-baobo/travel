@@ -23,6 +23,8 @@ export type PlannerCandidate = {
 };
 
 export type PlannerParams = {
+  startDate: string;
+  endDate: string;
   days: string;
   people: string;
   budget: string;
@@ -37,6 +39,20 @@ export type ItineraryPreviewDay = {
 
 // ============ UI 文案配置 ============
 
+function getDefaultStartDate(): string {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function getDefaultEndDate(): string {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + 4);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export const CANDIDATE_CATEGORY_COPY: Record<CandidateCategory, string> = {
   attraction: '景点',
   hotel: '酒店',
@@ -45,10 +61,12 @@ export const CANDIDATE_CATEGORY_COPY: Record<CandidateCategory, string> = {
 };
 
 export const DEFAULT_PLANNER_PARAMS: PlannerParams = {
-  days: '4天',
-  people: '2人',
-  budget: '¥5000',
-  pace: '轻松游',
+  startDate: '',
+  endDate: '',
+  days: '',
+  people: '',
+  budget: '',
+  pace: '',
 };
 
 export const PLANNER_MODE_COPY: Record<PlannerMode, { label: string; description: string; icon: string }> = {
@@ -58,8 +76,10 @@ export const PLANNER_MODE_COPY: Record<PlannerMode, { label: string; description
 };
 
 export const PARAMETER_OPTIONS: Record<keyof PlannerParams, string[]> = {
-  days: ['3天', '4天', '5天', '7天'],
-  people: ['1人', '2人', '3–5人', '家庭'],
+  days: [],
+  startDate: [],
+  endDate: [],
+  people: ['1人', '2人', '3人', '自定义'],
   budget: ['¥3000', '¥5000', '¥8000', '自定义'],
   pace: ['轻松游', '标准游', '紧凑游'],
 };
