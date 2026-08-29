@@ -11,6 +11,7 @@ import { useLiveTravelStore } from '../../store/useLiveTravelStore';
 import { useRouteStore } from '../../store/useRouteStore';
 import { usePreferenceStore } from '../../store/usePreferenceStore';
 import { useTripStore } from '../../store/useTripStore';
+import { useElderlyMode } from '../../theme/ElderlyModeContext';
 import { hydrateSelectedHotelGeography } from '../../services/travelData/hotel/HotelGeoService';
 import { fetchAmapRouteSegment } from '../../utils/amapService';
 import { isSameTripHotelContext } from '../../domain/tripHotel';
@@ -101,6 +102,7 @@ export default function LiveItineraryScreen() {
   const selectedHotelContext = useRouteStore(state => state.selectedHotelContext);
   const reconcileSelectedHotelContext = useRouteStore(state => state.reconcileSelectedHotelContext);
   const preference = usePreferenceStore();
+  const { scaleFont } = useElderlyMode();
   const [segments, setSegments] = useState<Record<string, SegmentResult>>({});
   const [loading, setLoading] = useState(false);
   const [showTripSetup, setShowTripSetup] = useState(false);
@@ -333,7 +335,7 @@ export default function LiveItineraryScreen() {
     return (
       <View style={styles.empty}>
         <View style={styles.emptyIcon}><Ionicons name="map-outline" size={48} color={colors.primary} /></View>
-        <Text style={styles.emptyTitle}>路线还是空的</Text>
+        <Text style={[styles.emptyTitle, { fontSize: scaleFont(20) }]}>路线还是空的</Text>
         <Text style={styles.emptyText}>先从真实景点、酒店或餐厅中加入两个地点，系统就会按天安排并计算它们之间的交通。</Text>
         <TouchableOpacity style={styles.primaryButton} onPress={() => navigation.navigate('LivePlaces', { category: 'attraction' })}>
           <Text style={styles.primaryButtonText}>去添加地点</Text>
@@ -368,7 +370,7 @@ export default function LiveItineraryScreen() {
           <View style={styles.tripSetupHeader}>
             <Ionicons name="calendar-outline" size={20} color={colors.primary} />
             <View style={styles.tripSetupCopy}>
-              <Text style={styles.tripSetupTitle}>
+              <Text style={[styles.tripSetupTitle, { fontSize: scaleFont(15) }]}>
                 {formatDayDate(travelStartDate)} 出发 · 共{travelDays}天{Math.max(0, travelDays - 1)}晚
               </Text>
               <Text style={styles.tripSetupText}>
@@ -385,8 +387,8 @@ export default function LiveItineraryScreen() {
               const count = dayAssignCounts[index + 1] || 0;
               return (
                 <View key={date} style={[styles.dayChip, count > 0 && styles.dayChipActive]}>
-                  <Text style={[styles.dayChipDay, count > 0 && styles.dayChipDayActive]}>第{index + 1}天</Text>
-                  <Text style={[styles.dayChipDate, count > 0 && styles.dayChipDateActive]}>
+                  <Text style={[styles.dayChipDay, count > 0 && styles.dayChipDayActive, { fontSize: scaleFont(11) }]}>第{index + 1}天</Text>
+                  <Text style={[styles.dayChipDate, count > 0 && styles.dayChipDateActive, { fontSize: scaleFont(12) }]}>
                     {formatDayDate(date)}
                   </Text>
                   <Text style={[styles.dayChipCount, count > 0 && styles.dayChipCountActive]}>
@@ -463,8 +465,8 @@ export default function LiveItineraryScreen() {
           return (
             <View key={plan.day} style={styles.daySection}>
               <View style={styles.dayHeader}>
-                <View style={styles.dayBadge}><Text style={styles.dayBadgeText}>第{plan.day}天</Text></View>
-                <Text style={styles.dayHeaderText}>{formatDayDate(plan.date)}</Text>
+                <View style={styles.dayBadge}><Text style={[styles.dayBadgeText, { fontSize: scaleFont(12) }]}>第{plan.day}天</Text></View>
+                <Text style={[styles.dayHeaderText, { fontSize: scaleFont(14) }]}>{formatDayDate(plan.date)}</Text>
                 {plan.places.length > 0 && (
                   <Text style={styles.dayHeaderMeta}>
                     {dayWindow.start} - {minutesToClock(dayEndMinute)} · 步行{walkingMinutesByDay[plan.day] || 0}分钟
@@ -500,7 +502,7 @@ export default function LiveItineraryScreen() {
                           <Ionicons name="bed-outline" size={16} color="#FFF" />
                         </View>
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.hotelAnchorTitle}>{node.endpoint.name}</Text>
+                          <Text style={[styles.hotelAnchorTitle, { fontSize: scaleFont(13) }]}>{node.endpoint.name}</Text>
                           <Text style={styles.hotelAnchorText}>
                             {index === 0 ? `${entry.startTime} 从酒店出发` : `${entry.startTime} 返回酒店`}
                           </Text>
@@ -552,13 +554,13 @@ export default function LiveItineraryScreen() {
 
         <TouchableOpacity style={styles.addMore} onPress={() => navigation.navigate('LivePlaces', { category: 'attraction' })}>
           <Ionicons name="add-circle-outline" size={20} color={colors.primary} />
-          <Text style={styles.addMoreText}>继续添加真实地点</Text>
+          <Text style={[styles.addMoreText, { fontSize: scaleFont(14) }]}>继续添加真实地点</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.blindBoxButton} onPress={() => navigation.navigate('BlindBox')}>
           <Ionicons name="gift-outline" size={20} color="#FFF" />
           <View style={styles.blindBoxButtonCopy}>
-            <Text style={styles.blindBoxButtonTitle}>给某一天加一个旅行盲盒</Text>
-            <Text style={styles.blindBoxButtonText}>生成后会标注具体游玩日期与时间段</Text>
+            <Text style={[styles.blindBoxButtonTitle, { fontSize: scaleFont(14) }]}>给某一天加一个旅行盲盒</Text>
+            <Text style={[styles.blindBoxButtonText, { fontSize: scaleFont(10) }]}>生成后会标注具体游玩日期与时间段</Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.7)" />
         </TouchableOpacity>
@@ -629,6 +631,7 @@ function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays
   onMove: (placeId: string, direction: -1 | 1) => void;
   onRemove: (placeId: string) => void;
 }) {
+  const { scaleFont } = useElderlyMode();
   const isBlindBox = place.tags.includes('旅行盲盒');
   const accessibility = assessPlaceAccessibility(place);
   return (
@@ -638,7 +641,7 @@ function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays
       </View>
       <View style={styles.stopCopy}>
         <View style={styles.stopTitleRow}>
-          <Text style={styles.stopName} numberOfLines={1}>{place.name}</Text>
+          <Text style={[styles.stopName, { fontSize: scaleFont(15) }]} numberOfLines={1}>{place.name}</Text>
           {isBlindBox && <View style={styles.blindBadge}><Text style={styles.blindBadgeText}>盲盒</Text></View>}
         </View>
         <Text style={styles.stopMeta}>
@@ -787,6 +790,7 @@ function RouteSegment({ result, loading, originName, destinationName, departAt, 
   departAt: string;
   arriveAt: string;
 }) {
+  const { scaleFont } = useElderlyMode();
   if (loading) {
     return <View style={styles.routeCard}><ActivityIndicator size="small" color={colors.primary} /><Text style={styles.loadingText}>{originName} → {destinationName} · 正在获取交通方案…</Text></View>;
   }
@@ -801,8 +805,8 @@ function RouteSegment({ result, loading, originName, destinationName, departAt, 
         <Text style={styles.routeClock}>{departAt} 出发 · {arriveAt} 到达</Text>
         <View style={styles.modeTitleRow}>
           <Ionicons name={route.mode === 'transit' ? 'subway-outline' : route.mode === 'walking' ? 'walk-outline' : 'car-outline'} size={19} color={colors.primary} />
-          <Text style={styles.modeTitle}>{MODE_LABEL[route.mode]}</Text>
-          <Text style={styles.routeTime}>{route.durationMinutes} 分钟</Text>
+          <Text style={[styles.modeTitle, { fontSize: scaleFont(13) }]}>{MODE_LABEL[route.mode]}</Text>
+          <Text style={[styles.routeTime, { fontSize: scaleFont(14) }]}>{route.durationMinutes} 分钟</Text>
         </View>
         {route.detail && <Text style={styles.transitDetail}>{route.detail}</Text>}
         <View style={styles.routeMetaRow}>

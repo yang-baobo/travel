@@ -423,7 +423,7 @@ export default function FloatingMiniChat({ voiceEngine }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { position: 'absolute', bottom: 180, right: 16, alignItems: 'flex-end', zIndex: 999 },
+  container: { position: 'absolute', bottom: 500, right: 16, alignItems: 'flex-end', zIndex: 999 },
   panel: {
     backgroundColor: '#F6F9F8', borderRadius: 24, overflow: 'hidden', marginBottom: 10,
     borderWidth: 1, borderColor: 'rgba(14,159,147,0.18)', elevation: 10,

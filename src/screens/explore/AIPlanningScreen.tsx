@@ -293,7 +293,7 @@ export default function AIPlanningScreen() {
                   </Pressable>
                   <Pressable onPress={() => void submit()} disabled={!input.trim() || submitting} style={[styles.sendButton, (!input.trim() || submitting) && styles.disabled]}><Ionicons name="arrow-up" size={19} color="#FFF" /></Pressable>
                 </View>
-                <Pressable onPress={() => setRealtimeVisible(true)} style={styles.callInline}><Ionicons name="call-outline" size={17} color="#0B7B72" /><Text style={styles.callInlineText}>改用实时电话继续补充</Text></Pressable>
+                <Pressable onPress={() => setRealtimeVisible(true)} style={styles.callInline}><Ionicons name="call-outline" size={20} color="#FFF" /><Text style={styles.callInlineText}>实时通话</Text></Pressable>
               </View>
             ) : null}
 

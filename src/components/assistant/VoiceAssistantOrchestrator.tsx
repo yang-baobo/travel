@@ -63,7 +63,7 @@ export default function VoiceAssistantOrchestrator() {
 }
 
 const styles = StyleSheet.create({
-  fabDock: { position: 'absolute', bottom: 94, right: 18, zIndex: 999, alignItems: 'center', justifyContent: 'center' },
+  fabDock: { position: 'absolute', bottom: 170, right: 18, zIndex: 999, alignItems: 'center', justifyContent: 'center' },
   halo: { position: 'absolute', backgroundColor: '#21C6B5' },
   fab: {
     overflow: 'visible',

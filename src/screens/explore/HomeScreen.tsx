@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Easing,
   LayoutAnimation,
@@ -23,6 +24,7 @@ import { usePlanningSessionStore } from '../../store/usePlanningSessionStore';
 import { useTripStore } from '../../store/useTripStore';
 import { buildPlanningRequest } from '../../services/planningRequestBuilder';
 import { useVoiceEngine } from '../../hooks/useVoiceEngine';
+import { useElderlyMode } from '../../theme/ElderlyModeContext';
 import type { ExploreStackParamList } from '../../types';
 import type { FliggyAttractionEditorial, TravelPlace } from '../../types/travel';
 import { DEFAULT_PLANNER_PARAMS, PLANNER_MODE_COPY, QUICK_SERVICES } from '../../data/beijingHomeUi';
@@ -55,6 +57,13 @@ const C = {
   textSecondary: '#627773',
   white: '#FFFFFF',
 };
+
+const FIELD_LABELS: Record<string, string> = { people: '选择人数', budget: '设置预算', pace: '选择节奏' };
+
+function formatDateDisplay(dateStr: string): string {
+  const d = new Date(`${dateStr}T12:00:00`);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
 
 const QUICK_PROMPTS = ['带父母慢慢逛', '建筑与咖啡', '周末两日松弛游'];
 
@@ -113,6 +122,7 @@ export default function HomeScreen() {
 
   const elderlyMode = usePreferenceStore(state => state.elderlyMode);
   const setElderlyMode = usePreferenceStore(state => state.setElderlyMode);
+  const { scaleFont, scaleIcon } = useElderlyMode();
   const hasSetPreferences = usePreferenceStore(state => state.hasSetPreferences);
   const preferencePromptDismissed = usePreferenceStore(state => state.preferencePromptDismissed);
   const dismissPreferencePrompt = usePreferenceStore(state => state.dismissPreferencePrompt);
@@ -124,7 +134,7 @@ export default function HomeScreen() {
   const plannerVoice = useVoiceEngine();
 
   const [params, setParams] = useState<PlannerParams>(DEFAULT_PLANNER_PARAMS);
-  const [mode, setMode] = useState<PlannerMode>('auto');
+  const [mode, setMode] = useState<PlannerMode>('complete');
   const [modePickerVisible, setModePickerVisible] = useState(false);
   const [picker, setPicker] = useState<ParameterField | null>(null);
   const [input, setInput] = useState('');
@@ -150,8 +160,8 @@ export default function HomeScreen() {
   const intro = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(0)).current;
   const plannerEntrance = useRef(new Animated.Value(0)).current;
+  const scrollRef = useRef<any>(null);
   const requestId = useRef(0);
-  const scale = elderlyMode ? 1.12 : 1;
   const showPreferenceNudge = !hasSetPreferences && !preferencePromptDismissed;
 
   const loadFeatured = useCallback(() => {
@@ -265,6 +275,8 @@ export default function HomeScreen() {
     : [];
   const activePlanIds = mode === 'auto' ? autoPlanIds : selectedIds;
   const activeCandidates = plannerCandidates.filter(item => activePlanIds.includes(item.id));
+  const allParamsSet = Boolean(params.startDate && params.people && params.budget && params.pace);
+  const canEnterPlanning = allParamsSet && (mode === 'auto' || activeCandidates.length > 0);
   const currentHeroImage = heroImages[heroIndex];
 
   const headerOpacity = scrollY.interpolate({ inputRange: [0, 120, 300], outputRange: [0, 0.25, 0.96], extrapolate: 'clamp' });
@@ -283,11 +295,16 @@ export default function HomeScreen() {
     setPlannerExpanded(value => !value);
     plannerEntrance.setValue(0);
     Animated.timing(plannerEntrance, { toValue: 1, duration: 460, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    // 展开后自动滚动到规划页面顶部
+    if (!plannerExpanded) {
+      setTimeout(() => scrollRef.current?.scrollTo({ y: 680, animated: true }), 300);
+    }
   };
 
   const handleToggleCandidate = (candidate: PlannerCandidate) => {
     if (mode === 'auto') {
       setAutoPlanIds(ids => {
+        if (ids.includes(candidate.id) && ids.length <= 1) return ids;
         if (ids.includes(candidate.id)) {
           setIgnoredIds(current => current.includes(candidate.id) ? current : [...current, candidate.id]);
           return ids.filter(id => id !== candidate.id);
@@ -342,13 +359,25 @@ export default function HomeScreen() {
 
   const enterPlanning = (entryMode: PlanningEntryMode, method: PlanningInputMethod, launchRealtime = false) => {
     if (planning) return;
-    const confirmedRequirements: PlanningRequirementKey[] = plannerExpanded ? ['people', 'budget', 'pace'] : [];
+    const confirmedRequirements: PlanningRequirementKey[] = [
+      ...(plannerExpanded ? ['travel_time', 'people', 'budget', 'pace'] as PlanningRequirementKey[] : []),
+    ];
     usePlanningSessionStore.getState().beginSession(createRequest(method), { entryMode, confirmedRequirements });
     navigation.navigate('AIPlanning', launchRealtime ? { launchRealtime: true } : undefined);
     setInputMethod('text');
   };
 
   const startPlanning = () => {
+    const missing: string[] = [];
+    if (!params.startDate) missing.push('日期');
+    if (!params.people) missing.push('人数');
+    if (!params.budget) missing.push('预算');
+    if (!params.pace) missing.push('节奏');
+    if (mode !== 'auto' && activeCandidates.length === 0) missing.push('景点');
+    if (missing.length > 0) {
+      Alert.alert('请补全信息', `尚未选择：${missing.join('、')}。请先完成设置再进入 AI 规划。`);
+      return;
+    }
     const entryMode: PlanningEntryMode = plannerExpanded && mode !== 'auto' ? 'selected_places' : 'chat';
     enterPlanning(entryMode, inputMethod);
   };
@@ -372,6 +401,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.container} edges={[]}>
       <Animated.ScrollView
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
         scrollEventThrottle={16}
@@ -429,10 +459,10 @@ export default function HomeScreen() {
               <Text style={styles.heroBadgeMeta}>高德实时地点</Text>
             </View>
 
-            <Text style={[styles.heroTitle, isDesktop && styles.heroTitleDesktop, elderlyMode && styles.heroTitleLarge]}>
+            <Text style={[styles.heroTitle, elderlyMode && styles.heroTitleLarge, isDesktop && styles.heroTitleDesktop]}>
               北京，正在为你展开
             </Text>
-            <Text style={[styles.heroSubtitle, isDesktop && styles.heroSubtitleDesktop]}>
+            <Text style={[styles.heroSubtitle, elderlyMode && styles.heroSubtitleLarge, isDesktop && styles.heroSubtitleDesktop]}>
               不从模板开始。从你的一句话、此刻的心情和真实城市数据开始。
             </Text>
 
@@ -444,7 +474,7 @@ export default function HomeScreen() {
                   onChangeText={value => { setInput(value); setSessionPreference(value); }}
                   placeholder="想怎么玩北京？说一句就好"
                   placeholderTextColor="rgba(255,255,255,0.56)"
-                  style={[styles.heroInput, { fontSize: 14 * scale }]}
+                  style={[styles.heroInput, { fontSize: scaleFont(14) }]}
                   returnKeyType="send"
                   onSubmitEditing={startPlanning}
                 />
@@ -454,9 +484,10 @@ export default function HomeScreen() {
                   <Animated.View pointerEvents="none" style={[styles.voicePulse, { opacity: pulseOpacity, transform: [{ scale: pulseScale }] }]} />
                   {plannerVoice.status === 'transcribing' ? <ActivityIndicator size="small" color="#FFF" /> : <Ionicons name={plannerVoice.status === 'listening' ? 'stop' : 'mic-outline'} size={20} color="#FFF" />}
                 </Pressable>
-                <PressScale onPress={startPlanning} disabled={planning}>
+                <PressScale onPress={togglePlanner} disabled={planning}>
                   <LinearGradient colors={['#21C6B5', '#0A8B80']} style={styles.sendButton}>
-                    {planning ? <ActivityIndicator size="small" color="#FFF" /> : <Ionicons name="arrow-forward" size={20} color="#FFF" />}
+                    <Ionicons name="sparkles" size={17} color="#FFF" style={{ marginRight: 6 }} />
+                    <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '900' }}>开始规划</Text>
                   </LinearGradient>
                 </PressScale>
               </View>
@@ -468,12 +499,6 @@ export default function HomeScreen() {
                   <Text style={styles.quickPromptText}>{prompt}</Text>
                 </Pressable>
               ))}
-            </View>
-
-            <View style={styles.planningMethodRow} testID="home-planning-entry-methods">
-              <Pressable onPress={togglePlanner} style={styles.planningMethodButton}><Ionicons name="map-outline" size={14} color="#FFF" /><Text style={styles.planningMethodText}>选景点规划</Text></Pressable>
-              <Pressable onPress={() => enterPlanning('chat', inputMethod)} style={styles.planningMethodButton}><Ionicons name="chatbubble-ellipses-outline" size={14} color="#FFF" /><Text style={styles.planningMethodText}>AI 对话定制</Text></Pressable>
-              <Pressable onPress={openRealtimePlanning} style={styles.planningMethodButton}><Ionicons name="call-outline" size={14} color="#FFF" /><Text style={styles.planningMethodText}>电话实时规划</Text></Pressable>
             </View>
 
             <View style={[styles.heroBottomRow, isDesktop && styles.heroBottomRowDesktop]}>
@@ -534,16 +559,29 @@ export default function HomeScreen() {
                   <Ionicons name="call-outline" size={17} color={C.tealDark} />
                   <Text style={styles.studioVoiceText}>实时通话</Text>
                 </Pressable>
-                <Pressable onPress={() => setModePickerVisible(true)} style={styles.studioModeButton}>
-                  <Text style={styles.studioModeText}>{PLANNER_MODE_COPY[mode].label}</Text>
-                  <Ionicons name="chevron-down" size={15} color={C.tealDark} />
-                </Pressable>
+              </View>
+
+              {/* 规划方式三个按钮 */}
+              <View style={styles.modeRow}>
+                {(Object.keys(PLANNER_MODE_COPY) as PlannerMode[]).map(m => {
+                  const copy = PLANNER_MODE_COPY[m];
+                  const active = mode === m;
+                  return (
+                    <Pressable key={m} onPress={() => setMode(m)} style={[styles.modeBtn, active && styles.modeBtnActive]}>
+                      <Text style={[styles.modeBtnText, active && styles.modeBtnTextActive]}>{copy.label}</Text>
+                    </Pressable>
+                  );
+                })}
               </View>
 
               <View style={styles.params}>
-                {(['days', 'people', 'budget', 'pace'] as ParameterField[]).map(field => (
+                <Pressable onPress={() => setPicker('days')} style={[styles.param, elderlyMode && styles.largeTouch]}>
+                  <Text style={styles.paramValue}>{params.startDate ? `${formatDateDisplay(params.startDate)} – ${formatDateDisplay(params.endDate)} · ${params.days}` : '选择日期'}</Text>
+                  <Ionicons name="chevron-down" size={13} color={C.teal} />
+                </Pressable>
+                {(['people', 'budget', 'pace'] as ParameterField[]).map(field => (
                   <Pressable key={field} onPress={() => setPicker(field)} style={[styles.param, elderlyMode && styles.largeTouch]}>
-                    <Text style={styles.paramValue}>{params[field]}</Text>
+                    <Text style={styles.paramValue}>{params[field] || FIELD_LABELS[field]}</Text>
                     <Ionicons name="chevron-down" size={13} color={C.teal} />
                   </Pressable>
                 ))}
@@ -571,10 +609,10 @@ export default function HomeScreen() {
                     </View>
                   </PressScale>
                 ) : null}
-                <PressScale onPress={startPlanning} disabled={planning} style={styles.primaryAction}>
-                  <LinearGradient colors={['#17BCAA', '#08766D']} style={styles.primaryActionInner}>
+                <PressScale onPress={startPlanning} disabled={!canEnterPlanning || planning} style={styles.primaryAction}>
+                  <LinearGradient colors={canEnterPlanning ? ['#17BCAA', '#08766D'] : ['#B0C4C0', '#93A9A4']} style={styles.primaryActionInner}>
                     {planning ? <ActivityIndicator color="#FFF" /> : <Ionicons name="sparkles" size={17} color="#FFF" />}
-                    <Text style={styles.primaryActionText}>{planning ? 'AI 正在规划…' : '进入 AI 规划页'}</Text>
+                    <Text style={styles.primaryActionText}>{planning ? 'AI 正在规划…' : '下一步'}</Text>
                     <Ionicons name="arrow-forward" size={17} color="#FFF" />
                   </LinearGradient>
                 </PressScale>
@@ -711,8 +749,9 @@ const styles = StyleSheet.create({
   heroBadgeMeta: { color: 'rgba(255,255,255,0.6)', fontSize: 9, fontWeight: '700' },
   heroTitle: { color: '#FFF', fontSize: 40, lineHeight: 48, fontWeight: '900', letterSpacing: -1.2, marginTop: 22, maxWidth: 800, textShadowColor: 'rgba(0,0,0,0.24)', textShadowOffset: { width: 0, height: 4 }, textShadowRadius: 18 },
   heroTitleDesktop: { fontSize: 66, lineHeight: 76, letterSpacing: -2.4 },
-  heroTitleLarge: { fontSize: 48, lineHeight: 56 },
+  heroTitleLarge: { fontSize: 56, lineHeight: 64 },
   heroSubtitle: { color: 'rgba(255,255,255,0.74)', fontSize: 14, lineHeight: 23, marginTop: 14, maxWidth: 590 },
+  heroSubtitleLarge: { fontSize: 18, lineHeight: 28 },
   heroSubtitleDesktop: { fontSize: 17, lineHeight: 28 },
   heroComposer: { width: '100%', marginTop: 28, minHeight: 68, padding: 8, paddingLeft: 16, borderRadius: 24, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(4,30,27,0.70)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.19)', shadowColor: '#000', shadowOpacity: 0.24, shadowRadius: 28, shadowOffset: { width: 0, height: 16 } },
   heroComposerDesktop: { maxWidth: 760, minHeight: 76, borderRadius: 27 },
@@ -721,7 +760,7 @@ const styles = StyleSheet.create({
   composerActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   voiceOrb: { position: 'relative', width: 47, height: 47, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
   voicePulse: { position: 'absolute', width: 47, height: 47, borderRadius: 24, backgroundColor: 'rgba(42,210,188,0.45)' },
-  sendButton: { width: 50, height: 50, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  sendButton: { paddingHorizontal: 24, height: 52, borderRadius: 26, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   quickPromptRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   quickPrompt: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.09)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   quickPromptText: { color: 'rgba(255,255,255,0.72)', fontSize: 10, fontWeight: '700' },
@@ -750,11 +789,16 @@ const styles = StyleSheet.create({
   studioSubtitle: { color: C.textSecondary, fontSize: 11, lineHeight: 17, marginTop: 5 },
   studioClose: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EFF5F3' },
   studioInput: { minHeight: 82, marginTop: 18, padding: 14, borderRadius: 18, color: C.ink, textAlignVertical: 'top', backgroundColor: '#F3F7F5', borderWidth: 1, borderColor: '#E1EAE7', outlineStyle: 'none' } as any,
-  studioToolbar: { marginTop: 11, flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+  studioToolbar: { marginTop: 11, flexDirection: 'row', alignItems: 'center', gap: 10 },
   studioVoiceButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 13, borderRadius: 22, backgroundColor: '#EAF7F4' },
   studioVoiceText: { color: C.tealDark, fontSize: 11, fontWeight: '800' },
   studioModeButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 13, borderRadius: 22, backgroundColor: '#F4F6F5' },
   studioModeText: { color: C.ink, fontSize: 11, fontWeight: '800' },
+  modeRow: { flexDirection: 'row', gap: 8, marginTop: 13 },
+  modeBtn: { flex: 1, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#F4F7F6', borderWidth: 1, borderColor: '#E0EAE7' },
+  modeBtnActive: { backgroundColor: '#0E9F93', borderColor: '#0E9F93' },
+  modeBtnText: { color: '#627773', fontSize: 11, fontWeight: '700' },
+  modeBtnTextActive: { color: '#FFF', fontWeight: '900' },
   params: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 13 },
   param: { minHeight: 42, paddingHorizontal: 12, borderRadius: 21, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#F3F7F5', borderWidth: 1, borderColor: '#E0EAE7' },
   paramValue: { color: C.ink, fontSize: 11, fontWeight: '800' },
@@ -763,8 +807,8 @@ const styles = StyleSheet.create({
   studioActionsMobile: { alignItems: 'stretch', flexDirection: 'column' },
   previewAction: { minWidth: 180 },
   previewActionInner: { minHeight: 52, paddingHorizontal: 18, borderRadius: 26, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: '#E6F5F1' },
-  previewActionText: { color: C.tealDark, fontSize: 12, fontWeight: '800' },
-  primaryAction: { minWidth: 220 },
+  previewActionText: { color: C.tealDark, fontSize: 14, fontWeight: '800' },
+  primaryAction: { minWidth: 140 },
   primaryActionInner: { minHeight: 52, paddingHorizontal: 20, borderRadius: 26, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   primaryActionText: { color: '#FFF', fontSize: 13, fontWeight: '900' },
   preferenceNudge: { marginTop: 28, borderRadius: 25, overflow: 'hidden' },
