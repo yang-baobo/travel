@@ -18,6 +18,9 @@ import type {
   TripPlanDraftDay,
   TripPlanDraftStop,
   UnassignedPlace,
+  PlanningCandidatePlace,
+  PlanningPlaceMention,
+  PlanningIssue,
 } from '../types/planning';
 import type {
   TravelPlace,
@@ -28,6 +31,8 @@ import type {
 } from '../types/travel';
 import { buildLocalPlanIntent } from '../utils/planIntentSchema';
 import { categories } from '../data/categories';
+import { applyPlanningPatch } from './planningPatch';
+import { assessPlaceAccessibility, isMobilityConflict, mobilityExplanation } from './mobilityPolicy';
 
 export interface PlanningProgress {
   status: Extract<PlanningSessionStatus, 'understanding' | 'querying_places' | 'calculating_transport'>;
@@ -108,6 +113,33 @@ function uniquePlaces(places: TravelPlace[]): TravelPlace[] {
   return [...new Map(places.map(place => [place.id, place])).values()];
 }
 
+function normalizePlaceName(value: string): string {
+  return value.normalize('NFKC').replace(/^北京市/, '').replace(/[\s（）()·•—\-]/g, '').toLowerCase();
+}
+
+const VERIFIED_PLACE_ALIASES: Record<string, string> = {
+  [normalizePlaceName('故宫')]: normalizePlaceName('故宫博物院'),
+};
+
+function distanceMeters(a: TravelPlace, b: TravelPlace): number {
+  const lat = (a.location.latitude - b.location.latitude) * 111_000;
+  const lng = (a.location.longitude - b.location.longitude) * 85_000;
+  return Math.sqrt(lat * lat + lng * lng);
+}
+
+function exactMentionMatch(mention: PlanningPlaceMention, places: TravelPlace[]): TravelPlace | null {
+  const name = VERIFIED_PLACE_ALIASES[normalizePlaceName(mention.name)] || normalizePlaceName(mention.name);
+  const matches = places.filter(place => normalizePlaceName(place.name) === name);
+  if (matches.length === 1) return matches[0];
+  // A same-name result is safe only when there is a single provider entity in
+  // this response. Never bind a fuzzy/substring match to a route.
+  return null;
+}
+
+function candidateFromPlace(place: TravelPlace): PlanningCandidatePlace {
+  return { source: place.source, sourceId: place.id, name: place.name, category: place.category, latitude: place.location.latitude, longitude: place.location.longitude, originalPlace: place };
+}
+
 function validCoordinate(place: TravelPlace): boolean {
   return Number.isFinite(place.location.latitude)
     && Number.isFinite(place.location.longitude)
@@ -171,6 +203,12 @@ function hotelStarsForPreference(level: string): number[] | undefined {
   return undefined;
 }
 
+function issueFromError(error: unknown, provider: PlanningIssue['provider'], fallback: string, blocking = false): PlanningIssue {
+  const candidate = error as { code?: unknown; retryable?: unknown } | null;
+  const code = typeof candidate?.code === 'string' ? candidate.code : 'PROVIDER_REQUEST_FAILED';
+  return { code, provider, message: fallback, retryable: candidate?.retryable !== false, blocking };
+}
+
 function withVerifiedHotelGeo(hotel: TravelHotel, geo: HotelGeoResponse): TravelHotel | null {
   if (!geo.coordinateVerified || geo.coordinateSource !== 'amap' || geo.latitude === null || geo.longitude === null) return null;
   return {
@@ -191,12 +229,19 @@ async function selectVerifiedHotel(
   response: HotelSearchResponse,
   destination: string,
   geocode: PlanningOrchestratorDependencies['geocodeHotel'],
+  preferences?: PlanningRequest['preferenceSnapshot'],
+  excludedIds: Set<string> = new Set(),
 ): Promise<{ hotel: TravelHotel | null; rejected: UnassignedPlace[] }> {
   const rejected: UnassignedPlace[] = [];
+  const verifiedHotels: TravelHotel[] = [];
+  // A single planning request must not geocode every raw supplier result.
+  // Three candidates are enough for a resilient choice and keep AMap traffic
+  // bounded when FlyAI returns a long list.
   for (const hotel of response.hotels.slice(0, 3)) {
+    if (excludedIds.has(hotel.id) || excludedIds.has(hotel.sourceHotelId)) continue;
     try {
       const verified = withVerifiedHotelGeo(hotel, await geocode(hotelGeoRequest(hotel, destination)));
-      if (verified) return { hotel: verified, rejected };
+      if (verified) { verifiedHotels.push(verified); continue; }
       rejected.push({
         sourceId: hotel.sourceHotelId,
         name: hotel.name,
@@ -210,11 +255,28 @@ async function selectVerifiedHotel(
         name: hotel.name,
         category: 'hotel',
         reasonCode: 'hotel_location_unverified',
-        reason: error instanceof Error ? error.message : '酒店位置核验失败。',
+        reason: '酒店位置核验暂时失败，已跳过该候选。',
       });
+      const code = (error as { code?: unknown } | null)?.code;
+      // A provider outage is not fixed by trying every hotel. Stop after the
+      // first bounded failure and let the draft surface a retryable issue.
+      if (typeof code === 'string' && /^(?:TIMEOUT|NETWORK_ERROR|AMAP_|PROVIDER_)/.test(code)) break;
     }
   }
-  return { hotel: null, rejected };
+  if (verifiedHotels.length === 0) return { hotel: null, rejected };
+  // Rank the bounded verified candidates. Missing fields are neutral and are
+  // surfaced as uncertainty later.
+  const ranked = [...verifiedHotels].sort((a, b) => {
+    const score = (hotel: TravelHotel) => {
+      const text = [hotel.name, hotel.district, hotel.address, ...(hotel.facilities || []), ...(hotel.tags || [])].filter(Boolean).join(' ');
+      const zone = preferences?.hotelZone && preferences.hotelZone !== 'any' ? (text.includes(preferences.hotelZone) ? 18 : 0) : 0;
+      const facilities = preferences?.hotelAmenities?.filter(item => text.includes(item)).length || 0;
+      const price = hotel.referencePrice === null ? 0 : Math.max(0, 1000 - hotel.referencePrice) / 100;
+      return (hotel.rating || 0) * 12 + price + (hotel.coordinateVerified ? 25 : 0) + zone + facilities * 5;
+    };
+    return score(b) - score(a);
+  });
+  return { hotel: ranked[0], rejected };
 }
 
 function findSegment(
@@ -230,16 +292,18 @@ function validateWalkingLimits(
   days: TripPlanDraftDay[],
   request: PlanningRequest,
 ): string[] {
-  if (request.preferenceSnapshot.transportPreference !== 'walking') return [];
   const issues: string[] = [];
   days.forEach(day => {
     const segments = day.stops.map(stop => stop.transportToNext).filter(Boolean) as TravelRouteSegment[];
-    const dailyMinutes = segments.reduce((sum, segment) => sum + (segment.durationMinutes || 0), 0);
-    if (dailyMinutes > request.hardConstraints.maxWalkingMinutesPerDay) {
-      issues.push(`第${day.day}天步行 ${dailyMinutes} 分钟，超过每日上限 ${request.hardConstraints.maxWalkingMinutesPerDay} 分钟。`);
+    const walkingSegments = segments.filter(segment => segment.mode === 'walking');
+    const dailyMinutes = walkingSegments.reduce((sum, segment) => sum + (segment.durationMinutes || 0), 0);
+    const dayLimit = request.dayConstraints?.find(item => item.day === day.day)?.maxWalkingMinutes ?? request.hardConstraints.maxWalkingMinutesPerDay;
+    if (dailyMinutes > dayLimit) {
+      issues.push(`第${day.day}天步行 ${dailyMinutes} 分钟，超过每日上限 ${dayLimit} 分钟。`);
     }
-    segments.forEach(segment => {
-      if ((segment.durationMinutes || 0) > request.hardConstraints.maxWalkingMinutesPerSegment) {
+    walkingSegments.forEach(segment => {
+      const segmentLimit = request.hardConstraints.maxWalkingMinutesPerSegment;
+      if ((segment.durationMinutes || 0) > segmentLimit) {
         issues.push(`${segment.originName} → ${segment.destinationName} 步行超过单段上限。`);
       }
     });
@@ -298,21 +362,32 @@ export function createPlanningOrchestrator(
       } catch (error) {
         intent = buildLocalPlanIntent(input.request, error instanceof Error ? error.message : '远端响应失败');
       }
-      const request: PlanningRequest = { ...input.request, ...intent.requestPatch };
+      let request: PlanningRequest = { ...input.request, ...intent.requestPatch };
+      if (intent.planningPatch) {
+        request = applyPlanningPatch(request, intent.planningPatch, request.userInput);
+      }
       if (intent.needsClarification) return { intent, request, draft: null };
 
       progress('querying_places', '正在查询高德真实地点与 FlyAI 酒店');
-      const selected = uniquePlaces(request.candidates.map(candidate => candidate.originalPlace));
+      const selected = uniquePlaces([
+        ...request.candidates.map(candidate => candidate.originalPlace),
+        ...(request.mustVisitCandidates || []).map(candidate => candidate.originalPlace),
+        ...(request.preferredCandidates || []).map(candidate => candidate.originalPlace),
+      ]);
       const targetAttractions = Math.min(6, Math.max(3, request.days + 1));
-      const targetRestaurants = Math.min(3, Math.max(1, request.days));
+      const mealSlotsPerDay = request.preferenceSnapshot.needLunch && request.preferenceSnapshot.needDinner ? 2 : 1;
+      const targetRestaurants = Math.min(10, Math.max(1, request.days * mealSlotsPerDay));
       const shouldDiscover = request.mode !== 'self';
+      const mentionKeywords = (request.unresolvedPlaceMentions || []).filter(item => item.intent !== 'avoid' && item.intent !== 'remove').map(item => item.name);
+      const attractionKeywords = Array.from(new Set([attractionKeyword(request), ...mentionKeywords].filter(Boolean))).slice(0, 6);
       const attractionPromise = shouldDiscover
-        ? deps.searchPlaces('attraction', attractionKeyword(request), 1, targetAttractions)
-        : Promise.resolve(null);
+        ? Promise.all(attractionKeywords.length ? attractionKeywords.map(keyword => deps.searchPlaces('attraction', keyword, 1, targetAttractions)) : [deps.searchPlaces('attraction', '', 1, targetAttractions)])
+        : Promise.resolve([]);
       const shouldArrangeMeals = request.preferenceSnapshot.needLunch || request.preferenceSnapshot.needDinner;
+      const restaurantKeywords = Array.from(new Set([restaurantKeyword(request), ...request.preferenceSnapshot.cuisines].filter(Boolean))).slice(0, 4);
       const restaurantPromise = shouldArrangeMeals
-        ? deps.searchPlaces('restaurant', restaurantKeyword(request), 1, targetRestaurants)
-        : Promise.resolve(null);
+        ? Promise.all(restaurantKeywords.length ? restaurantKeywords.map(keyword => deps.searchPlaces('restaurant', keyword, 1, targetRestaurants)) : [deps.searchPlaces('restaurant', '', 1, targetRestaurants)])
+        : Promise.resolve([]);
       const hotelBudget = request.totalBudget
         ? Math.max(1, Math.floor(request.totalBudget * 0.45 / Math.max(1, request.days - 1)))
         : request.preferenceSnapshot.hotelPriceRange.max;
@@ -335,21 +410,54 @@ export function createPlanningOrchestrator(
       const warnings: string[] = [];
       const uncertainties: string[] = [];
       const blockingIssues: string[] = [];
+      const issues: PlanningIssue[] = [];
       const unassignedPlaces: UnassignedPlace[] = [];
       if (intent.provider === 'local_fallback') warnings.push(intent.explanation);
-      if (attractionsResult.status === 'rejected') warnings.push('高德景点查询失败，仅保留用户已选的真实候选地点。');
-      if (restaurantsResult.status === 'rejected') warnings.push('高德餐厅查询失败，本次草稿无法自动安排餐厅。');
-      if (hotelsResult.status === 'rejected') warnings.push('FlyAI 酒店查询失败，未使用静态酒店补位。');
+      warnings.push(...mobilityExplanation(request));
+      if (attractionsResult.status === 'rejected') {
+        warnings.push('高德景点查询失败，仅保留用户已选的真实候选地点。');
+        issues.push(issueFromError(attractionsResult.reason, 'amap', '高德景点暂时不可用。'));
+      }
+      if (restaurantsResult.status === 'rejected') {
+        warnings.push('高德餐厅查询失败，本次草稿无法自动安排餐厅。');
+        issues.push(issueFromError(restaurantsResult.reason, 'amap', '高德餐厅暂时不可用。'));
+      }
+      if (hotelsResult.status === 'rejected') {
+        warnings.push('FlyAI 酒店查询失败，未使用静态酒店补位。');
+        issues.push(issueFromError(hotelsResult.reason, 'flyai', 'FlyAI 酒店暂时不可用。', Boolean(request.preferenceSnapshot.needHotel)));
+      }
 
-      const discoveredAttractions = attractionsResult.status === 'fulfilled' && attractionsResult.value
-        ? attractionsResult.value.items
+      const discoveredAttractions = attractionsResult.status === 'fulfilled'
+        ? attractionsResult.value.flatMap(response => response.items)
         : [];
-      const discoveredRestaurants = restaurantsResult.status === 'fulfilled' && restaurantsResult.value
-        ? restaurantsResult.value.items
+      const discoveredRestaurants = restaurantsResult.status === 'fulfilled'
+        ? restaurantsResult.value.flatMap(response => response.items)
         : [];
+      const providerPlaces = uniquePlaces([...selected, ...discoveredAttractions, ...discoveredRestaurants]);
+      const excludedIds = new Set([...(request.excludedPlaceIds || []), ...(request.excludedDraftPlaceIds || [])]);
+      const resolvedMustIds = new Set<string>();
+      const resolvedPreferredIds = new Set<string>();
+      const unresolvedRequired: string[] = [];
+      for (const mention of request.unresolvedPlaceMentions || []) {
+        const match = exactMentionMatch(mention, providerPlaces);
+        if (match) {
+          if (mention.intent === 'must_visit') resolvedMustIds.add(match.id);
+          if (mention.intent === 'prefer') resolvedPreferredIds.add(match.id);
+          if (mention.intent === 'avoid' || mention.intent === 'remove' || mention.intent === 'replace') excludedIds.add(match.id);
+        } else if (mention.intent === 'must_visit') {
+          unresolvedRequired.push(mention.name);
+        }
+      }
+      if (unresolvedRequired.length) blockingIssues.push(`以下必去地点未能从高德精确解析：${unresolvedRequired.join('、')}。`);
+      request = {
+        ...request,
+        mustVisitCandidates: providerPlaces.filter(place => resolvedMustIds.has(place.id)).map(candidateFromPlace),
+        preferredCandidates: providerPlaces.filter(place => resolvedPreferredIds.has(place.id)).map(candidateFromPlace),
+        excludedPlaceIds: [...excludedIds],
+      };
       let hotel: TravelHotel | null = null;
       if (hotelsResult.status === 'fulfilled' && hotelsResult.value) {
-        const hotelSelection = await selectVerifiedHotel(hotelsResult.value, '北京', deps.geocodeHotel);
+        const hotelSelection = await selectVerifiedHotel(hotelsResult.value, '北京', deps.geocodeHotel, request.preferenceSnapshot, new Set(request.excludedDraftPlaceIds || []));
         hotel = hotelSelection.hotel;
         unassignedPlaces.push(...hotelSelection.rejected);
       }
@@ -361,23 +469,43 @@ export function createPlanningOrchestrator(
           reasonCode: 'hotel_unavailable',
           reason: '没有获取到同时满足 FlyAI 实时结果与高德坐标核验的酒店。',
         });
-        blockingIssues.push('需要住宿，但尚无通过高德坐标核验的 FlyAI 酒店。');
+        if (hotelsResult.status === 'rejected') {
+          blockingIssues.push('需要住宿，但 FlyAI 酒店查询失败；请重试或暂时关闭住宿安排。');
+        } else if (hotelsResult.status === 'fulfilled' && hotelsResult.value && hotelsResult.value.hotels.length === 0) {
+          blockingIssues.push('需要住宿，但 FlyAI 没有返回符合日期、预算或星级条件的酒店。');
+          issues.push({ code: 'HOTEL_NO_RESULTS', provider: 'flyai', message: 'FlyAI 没有符合条件的酒店。', retryable: false, blocking: true });
+        } else {
+          blockingIssues.push('需要住宿，但尚无通过高德坐标核验的 FlyAI 酒店。');
+        }
+        if (!issues.some(issue => issue.code === 'HOTEL_NO_RESULTS')) {
+          issues.push({ code: 'HOTEL_UNAVAILABLE', provider: 'flyai', message: '没有可用于路线锚点的已核验酒店。', retryable: true, blocking: true });
+        }
       }
 
-      const allPlaces = uniquePlaces([...selected, ...discoveredAttractions, ...discoveredRestaurants]);
-      const selectedIds = new Set(selected.map(place => place.id));
+      const allPlaces = providerPlaces.filter(place => !excludedIds.has(place.id));
+      const selectedIds = new Set([
+        ...selected.map(place => place.id),
+        ...resolvedMustIds,
+      ]);
+      const preferredIds = new Set([
+        ...(request.preferredCandidates || []).map(place => place.sourceId),
+        ...resolvedPreferredIds,
+      ]);
       const maxPlaceCount = Math.min(10, Math.max(request.days * 2, selected.length));
       const ranked = [...allPlaces].sort((a, b) => {
         const selectedDelta = Number(selectedIds.has(b.id)) - Number(selectedIds.has(a.id));
         if (selectedDelta) return selectedDelta;
         return (b.rating || 0) - (a.rating || 0);
       });
-      const usable: Array<{ place: TravelPlace; windows: [number, number][]; priority: number }> = [];
+      const usable: Array<{ place: TravelPlace; windows: [number, number][]; priority: number; required: boolean; lockedDay: number | null }> = [];
       let knownCostTotal = hotel?.referencePrice
         ? hotel.referencePrice * Math.max(1, request.days - 1)
         : 0;
       let unknownCosts = hotel?.referencePrice === null && Boolean(hotel);
 
+      const mobilityActive = request.hardConstraints.mobilityLimitations.length > 0
+        || request.preferenceSnapshot.elderlyMode
+        || (request.derivedConstraints || []).some(item => item.type === 'limited_mobility' || item.type === 'low_walking');
       for (const place of ranked) {
         if (!validCoordinate(place)) {
           unassignedPlaces.push({ sourceId: place.id, name: place.name, category: place.category, reasonCode: 'route_unavailable', reason: '高德地点坐标无效，未进入路线计算。' });
@@ -396,6 +524,15 @@ export function createPlanningOrchestrator(
             continue;
           }
         }
+        const accessibility = assessPlaceAccessibility(place);
+        if (mobilityActive && isMobilityConflict(place, request)) {
+          const requiredByUser = resolvedMustIds.has(place.id) || selectedIds.has(place.id);
+          const reason = '公开地点信息提示可能存在长距离步行、坡道或台阶，不符合当前行动便利限制。';
+          unassignedPlaces.push({ sourceId: place.id, name: place.name, category: place.category, reasonCode: 'mobility_conflict', reason });
+          if (requiredByUser) blockingIssues.push(`必去地点“${place.name}”与行动便利限制冲突，请确认是否采用短线、接驳或替代方案。`);
+          continue;
+        }
+        if (mobilityActive && accessibility.status === 'unknown') uncertainties.push(`“${place.name}”的景区内部步行和无障碍信息不足，不能保证行动便利。`);
         let windows = verifiedOpeningWindows(place);
         if (!windows) {
           unassignedPlaces.push({ sourceId: place.id, name: place.name, category: place.category, reasonCode: 'hours_unverified', reason: '高德未返回可解析的营业时间，不能放入正式时间轴。' });
@@ -417,12 +554,19 @@ export function createPlanningOrchestrator(
           unassignedPlaces.push({ sourceId: place.id, name: place.name, category: place.category, reasonCode: 'budget_exceeded', reason: '加入后已知费用会超过总预算。' });
           continue;
         }
-        if (usable.length >= maxPlaceCount && !selectedIds.has(place.id)) {
+        const isRequired = selectedIds.has(place.id) && request.mode === 'self'
+          || resolvedMustIds.has(place.id)
+          || (request.mode === 'complete' && selectedIds.has(place.id))
+          || (place.category === 'restaurant' && (request.preferenceSnapshot.needLunch || request.preferenceSnapshot.needDinner));
+        if (usable.length >= maxPlaceCount && !isRequired) {
           unassignedPlaces.push({ sourceId: place.id, name: place.name, category: place.category, reasonCode: 'optimizer_unassigned', reason: '当前天数无法容纳更多地点，保留为候补。' });
           continue;
         }
         knownCostTotal += placeCost || 0;
-        usable.push({ place, windows, priority: selectedIds.has(place.id) ? 100 : Math.round((place.rating || 3) * 15) });
+        const mention = (request.unresolvedPlaceMentions || []).find(item => normalizePlaceName(item.name) === normalizePlaceName(place.name));
+        const accessibilityPenalty = mobilityActive && accessibility.status === 'unknown' ? 12 : 0;
+        const accessibilityBonus = mobilityActive && accessibility.status === 'verified' ? 8 : 0;
+        usable.push({ place, windows, priority: Math.max(1, (isRequired ? 100 : preferredIds.has(place.id) ? 85 : Math.round((place.rating || 3) * 15)) - accessibilityPenalty + accessibilityBonus), required: isRequired, lockedDay: mention?.lockedDay ?? null });
       }
 
       if (request.hardConstraints.dietaryAllergies.length > 0) {
@@ -434,23 +578,56 @@ export function createPlanningOrchestrator(
       progress('calculating_transport', '正在计算高德真实交通并调用路线优化器');
       let optimization: RouteOptimizationResponse | null = null;
       let segments: TravelRouteSegment[] = [];
+      let routableUsable = usable;
       if (usable.length > 0) {
-        const endpoints: TravelRouteEndpoint[] = [];
-        if (hotel) endpoints.push({ id: hotel.id, name: hotel.name, location: { latitude: hotel.latitude!, longitude: hotel.longitude! } });
-        endpoints.push(...usable.map(item => ({ id: item.place.id, name: item.place.name, location: item.place.location })));
+        const endpointsFor = (items: typeof usable): TravelRouteEndpoint[] => {
+          const endpoints: TravelRouteEndpoint[] = [];
+          if (hotel) endpoints.push({ id: hotel.id, name: hotel.name, location: { latitude: hotel.latitude!, longitude: hotel.longitude! } });
+          endpoints.push(...items.map(item => ({ id: item.place.id, name: item.place.name, location: item.place.location })));
+          return endpoints;
+        };
         try {
-          const matrix = await deps.buildMatrix(
-            endpoints,
-            request.preferenceSnapshot.transportPreference,
-            { defaultMode: request.preferenceSnapshot.transportRule.defaultMode },
+          let matrix = await deps.buildMatrix(
+            endpointsFor(routableUsable),
+            request.transportPlan?.primary || request.preferenceSnapshot.transportPreference,
+            { ...request.preferenceSnapshot.transportRule },
           );
+          const failedPairs = matrix.failedPairs || [];
+          if (failedPairs.length) {
+            const requiredIds = new Set([
+              ...(hotel ? [hotel.id] : []),
+              ...routableUsable.filter(item => item.required).map(item => item.place.id),
+            ]);
+            const failedIds = new Set(failedPairs.flatMap(pair => [pair.originId, pair.destinationId]));
+            // A failed hotel → optional-place leg only disqualifies that
+            // optional place. A route is blocked when both ends are required
+            // anchors/mandatory places and therefore cannot be removed.
+            const requiredFailure = failedPairs.some(pair => requiredIds.has(pair.originId) && requiredIds.has(pair.destinationId));
+            if (!requiredFailure) {
+              const removable = new Set([...failedIds].filter(id => !requiredIds.has(id)));
+              routableUsable = routableUsable.filter(item => !removable.has(item.place.id));
+              failedIds.forEach(id => {
+                const removed = usable.find(item => item.place.id === id);
+                if (removed) unassignedPlaces.push({ sourceId: id, name: removed.place.name, category: removed.place.category, reasonCode: 'route_unavailable', reason: '高德路线暂时不可用，已降级为候补地点。' });
+              });
+              matrix = await deps.buildMatrix(
+                endpointsFor(routableUsable),
+                request.transportPlan?.primary || request.preferenceSnapshot.transportPreference,
+                { ...request.preferenceSnapshot.transportRule },
+              );
+            }
+          }
+          if ((matrix.failedPairs || []).length) {
+            issues.push({ code: 'AMAP_PARTIAL_ROUTE', provider: 'amap', message: '部分高德路段不可用，无法生成完整真实路线。', retryable: true, blocking: true });
+            throw new Error('高德部分路段暂时不可用，无法生成完整真实路线。');
+          }
           segments = matrix.segments;
           const startMinute = clockToMinutes(request.preferenceSnapshot.dailyStartTime, 540);
           const requestedEnd = clockToMinutes(request.preferenceSnapshot.dailyEndTime, 1140);
           const endMinute = request.hardConstraints.noNightActivity ? Math.min(requestedEnd, 1140) : requestedEnd;
           const dates = Array.from({ length: request.days }, (_, index) => addDays(request.preferenceSnapshot.travelStartDate, index));
           optimization = await deps.optimize({
-            attractions: usable.map(item => ({
+            attractions: routableUsable.map(item => ({
               id: item.place.id,
               duration_minutes: durationFor(item.place, request),
               opening_windows: item.windows,
@@ -459,19 +636,33 @@ export function createPlanningOrchestrator(
                 isAttractionClosedOnDate(item.place.openHours, date) ? [] : item.windows,
               ])),
               priority: item.priority,
+              required: item.required,
+              locked_day: item.lockedDay,
+              preferred: !item.required,
             })),
-            days: Array.from({ length: request.days }, (_, index) => ({
+            days: Array.from({ length: request.days }, (_, index) => {
+              const constraint = request.dayConstraints?.find(item => item.day === index + 1);
+              const dayStart = constraint?.startTime ? clockToMinutes(constraint.startTime, startMinute) : startMinute;
+              const dayRequestedEnd = constraint?.endTime ? clockToMinutes(constraint.endTime, endMinute) : endMinute;
+              return {
               day: index + 1,
-              start_minute: startMinute,
-              end_minute: endMinute,
+              start_minute: dayStart,
+              end_minute: request.hardConstraints.noNightActivity ? Math.min(dayRequestedEnd, 1140) : dayRequestedEnd,
               start_anchor_id: hotel?.id || null,
               end_anchor_id: hotel?.id || null,
-              reserved_minutes: request.pace === 'relaxed' ? 60 : request.pace === 'standard' ? 30 : 15,
-            })),
+              // Mobility-aware plans keep a larger daily buffer for seated
+              // rest, meals, hotel return and the unreported walking inside a
+              // venue. Provider route matrices only describe POI-to-POI legs.
+              reserved_minutes: mobilityActive ? 90 : request.pace === 'relaxed' ? 60 : request.pace === 'standard' ? 30 : 15,
+              max_walking_minutes: constraint?.maxWalkingMinutes ?? request.hardConstraints.maxWalkingMinutesPerDay,
+              no_night_activity: request.hardConstraints.noNightActivity,
+              };
+            }),
             matrix: { node_ids: matrix.node_ids, durations: matrix.durations },
           });
         } catch (error) {
           blockingIssues.push(error instanceof Error ? error.message : '真实交通或路线优化失败。');
+          if (!(issues.some(issue => issue.code === 'AMAP_PARTIAL_ROUTE'))) issues.push(issueFromError(error, 'amap', '真实交通或路线优化暂时不可用。', true));
           usable.forEach(item => unassignedPlaces.push({
             sourceId: item.place.id,
             name: item.place.name,
@@ -482,7 +673,7 @@ export function createPlanningOrchestrator(
         }
       }
 
-      const placeMap = new Map(usable.map(item => [item.place.id, item.place]));
+      const placeMap = new Map(routableUsable.map(item => [item.place.id, item.place]));
       const days = optimization ? planDays({ request, optimization, places: placeMap, segments, hotel }) : [];
       if (optimization) {
         optimization.unassigned_attraction_ids.forEach(id => {
@@ -505,6 +696,7 @@ export function createPlanningOrchestrator(
         warnings,
         uncertainties,
         blockingIssues,
+        issues,
         knownCostTotal: Math.round(knownCostTotal * 100) / 100,
         costCoverage: unknownCosts ? 'partial' : 'complete',
         providers: ['amap', ...(hotel ? ['flyai' as const] : []), ...(optimization ? ['google-or-tools' as const] : [])],

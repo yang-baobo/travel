@@ -7,6 +7,8 @@ export type PlanningInputMethod = 'text' | 'asr' | 'realtime';
 export type PlanningPace = 'relaxed' | 'standard' | 'packed';
 export type PlanIntentProvider = 'remote_glm' | 'local_fallback' | 'unavailable';
 export type PlanningEntryMode = 'selected_places' | 'chat' | 'realtime';
+export type PlanningPatchSource = PlanningInputMethod | 'preference_settings';
+export type PlanningPlaceIntent = 'must_visit' | 'prefer' | 'avoid' | 'remove' | 'replace';
 export type PlanningRequirementKey =
   | 'city'
   | 'travel_time'
@@ -36,6 +38,108 @@ export interface PlanningCandidatePlace {
   latitude: number;
   longitude: number;
   originalPlace: TravelPlace;
+}
+
+/** A place mentioned by the user before it has been resolved to a provider POI. */
+export interface PlanningPlaceMention {
+  name: string;
+  intent: PlanningPlaceIntent;
+  lockedDay: number | null;
+  source?: PlanningPatchSource;
+}
+
+export interface PlanningDayConstraint {
+  day: number;
+  pace?: PlanningPace;
+  maxWalkingMinutes?: number;
+  startTime?: string;
+  endTime?: string;
+  areaPreference?: string;
+  note?: string;
+}
+
+export type DerivedTravelConstraintType =
+  | 'limited_mobility'
+  | 'elderly_companions'
+  | 'low_walking'
+  | 'avoid_stairs'
+  | 'rest_breaks'
+  | 'door_to_door_transport'
+  | 'accessible_hotel'
+  | 'accessible_attraction';
+
+/** A transparent, reversible inference grounded in the user's own words. */
+export interface DerivedTravelConstraint {
+  id: string;
+  type: DerivedTravelConstraintType;
+  sourceText: string;
+  source: PlanningPatchSource;
+  confidence: number;
+  severity: 'soft' | 'hard';
+  explanation: string;
+  assumptions: string[];
+  requiresConfirmation: boolean;
+}
+
+export interface PlanningTransportPlan {
+  primary: 'transit' | 'driving' | 'walking';
+  fallback: 'transit' | 'driving' | 'walking' | null;
+  maxTransitMinutes?: number;
+  maxWalkingMinutesPerSegment?: number;
+  reason?: string;
+}
+
+export interface PlanningPatchRecord {
+  patch: PlanningPatch;
+  sourceText: string;
+  appliedAt: string;
+  revision: number;
+}
+
+export interface PlanningPatch {
+  set: {
+    travelStartDate?: string;
+    days?: number;
+    people?: number;
+    totalBudget?: number | null;
+    pace?: PlanningPace;
+    mode?: PlannerMode;
+    transportPreference?: 'transit' | 'driving' | 'walking' | 'any';
+    needHotel?: boolean;
+    hotelLevel?: string;
+    hotelZone?: string;
+    hotelPriceMin?: number;
+    hotelPriceMax?: number;
+    needLunch?: boolean;
+    needDinner?: boolean;
+    dailyStartTime?: string;
+    dailyEndTime?: string;
+    noNightActivity?: boolean;
+    maxWalkingMinutesPerDay?: number;
+    maxWalkingMinutesPerSegment?: number;
+    elderlyMode?: boolean;
+  };
+  addPreferences: string[];
+  removePreferences: string[];
+  addCuisines: string[];
+  removeCuisines: string[];
+  addDietaryAllergies: string[];
+  removeDietaryAllergies: string[];
+  addForbiddenItems: string[];
+  removeForbiddenItems: string[];
+  addMobilityLimitations: string[];
+  removeMobilityLimitations: string[];
+  derivedConstraints: DerivedTravelConstraint[];
+  placeMentions: PlanningPlaceMention[];
+  dayConstraints: PlanningDayConstraint[];
+  confirmedRequirements: PlanningRequirementKey[];
+  needsClarification: boolean;
+  clarificationQuestions: string[];
+  reply: string;
+  transportPlan?: PlanningTransportPlan;
+  source?: PlanningPatchSource;
+  appliedAt?: string;
+  sessionRevision?: number;
 }
 
 export interface PlanningPreferenceSnapshot {
@@ -77,6 +181,19 @@ export interface PlanningRequest {
   candidates: PlanningCandidatePlace[];
   preferenceSnapshot: PlanningPreferenceSnapshot;
   hardConstraints: TripHardConstraints;
+  /** User intent is kept separately from provider-resolved candidates. */
+  mustVisitCandidates?: PlanningCandidatePlace[];
+  preferredCandidates?: PlanningCandidatePlace[];
+  excludedPlaceIds?: string[];
+  unresolvedPlaceMentions?: PlanningPlaceMention[];
+  dayConstraints?: PlanningDayConstraint[];
+  derivedConstraints?: DerivedTravelConstraint[];
+  excludedDraftPlaceIds?: string[];
+  routeVariantSeed?: string;
+  alternativeIndex?: number;
+  revision?: number;
+  transportPlan?: PlanningTransportPlan;
+  patchHistory?: PlanningPatchRecord[];
 }
 
 export interface PlanIntentNormalizedRequest {
@@ -97,6 +214,7 @@ export interface PlanIntent {
   explanation: string;
   provider: PlanIntentProvider;
   model: string | null;
+  planningPatch?: PlanningPatch;
 }
 
 export type DraftFactProvider = 'amap' | 'flyai' | 'google-or-tools';
@@ -131,8 +249,18 @@ export interface UnassignedPlace {
     | 'route_unavailable'
     | 'optimizer_unassigned'
     | 'hotel_unavailable'
-    | 'hotel_location_unverified';
+    | 'hotel_location_unverified'
+    | 'mobility_conflict'
+    | 'accessibility_unknown';
   reason: string;
+}
+
+export interface PlanningIssue {
+  code: string;
+  provider: 'amap' | 'flyai' | 'optimizer' | 'client' | 'unknown';
+  message: string;
+  retryable: boolean;
+  blocking: boolean;
 }
 
 export interface TripPlanDraft {
@@ -148,6 +276,8 @@ export interface TripPlanDraft {
   warnings: string[];
   uncertainties: string[];
   blockingIssues: string[];
+  /** Machine-readable diagnostics retained alongside the UI strings. */
+  issues?: PlanningIssue[];
   knownCostTotal: number;
   costCoverage: 'complete' | 'partial';
   providers: DraftFactProvider[];

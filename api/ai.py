@@ -85,12 +85,103 @@ class PlanIntentPatch(BaseModel):
     mode: Literal["self", "complete", "auto"] | None = None
 
 
+class PlanningPlaceMention(BaseModel):
+    model_config = {"extra": "forbid"}
+    name: str = Field(min_length=1, max_length=80)
+    intent: Literal["must_visit", "prefer", "avoid", "remove", "replace"]
+    lockedDay: int | None = Field(default=None, ge=1, le=15)
+
+
+class PlanningDayConstraint(BaseModel):
+    model_config = {"extra": "forbid"}
+    day: int = Field(ge=1, le=15)
+    pace: Literal["relaxed", "standard", "packed"] | None = None
+    maxWalkingMinutes: int | None = Field(default=None, ge=1, le=1440)
+    startTime: str | None = Field(default=None, pattern=r"^(?:[01]?\d|2[0-3]):[0-5]\d$")
+    endTime: str | None = Field(default=None, pattern=r"^(?:[01]?\d|2[0-3]):[0-5]\d$")
+    areaPreference: str | None = Field(default=None, max_length=80)
+    note: str | None = Field(default=None, max_length=120)
+
+
+class PlanningTransportPlan(BaseModel):
+    model_config = {"extra": "forbid"}
+    primary: Literal["transit", "driving", "walking"]
+    fallback: Literal["transit", "driving", "walking"] | None = None
+    maxTransitMinutes: int | None = Field(default=None, ge=1, le=1440)
+    maxWalkingMinutesPerSegment: int | None = Field(default=None, ge=1, le=1440)
+    reason: str | None = Field(default=None, max_length=200)
+
+
+class PlanningPatchSet(BaseModel):
+    model_config = {"extra": "forbid"}
+    travelStartDate: str | None = Field(default=None, pattern=r"^20\d{2}-\d{2}-\d{2}$")
+    days: int | None = Field(default=None, ge=1, le=15)
+    people: int | None = Field(default=None, ge=1, le=20)
+    totalBudget: float | None = Field(default=None, gt=0)
+    pace: Literal["relaxed", "standard", "packed"] | None = None
+    mode: Literal["self", "complete", "auto"] | None = None
+    transportPreference: Literal["transit", "driving", "walking", "any"] | None = None
+    needHotel: bool | None = None
+    hotelLevel: str | None = Field(default=None, max_length=40)
+    hotelZone: str | None = Field(default=None, max_length=80)
+    hotelPriceMin: float | None = Field(default=None, ge=0, le=100000)
+    hotelPriceMax: float | None = Field(default=None, ge=0, le=100000)
+    needLunch: bool | None = None
+    needDinner: bool | None = None
+    dailyStartTime: str | None = Field(default=None, pattern=r"^(?:[01]?\d|2[0-3]):[0-5]\d$")
+    dailyEndTime: str | None = Field(default=None, pattern=r"^(?:[01]?\d|2[0-3]):[0-5]\d$")
+    noNightActivity: bool | None = None
+    maxWalkingMinutesPerDay: int | None = Field(default=None, ge=1, le=1440)
+    maxWalkingMinutesPerSegment: int | None = Field(default=None, ge=1, le=1440)
+    elderlyMode: bool | None = None
+
+
+class DerivedTravelConstraintModel(BaseModel):
+    model_config = {"extra": "forbid"}
+    id: str = Field(min_length=1, max_length=80)
+    type: Literal[
+        "limited_mobility", "elderly_companions", "low_walking", "avoid_stairs",
+        "rest_breaks", "door_to_door_transport", "accessible_hotel", "accessible_attraction",
+    ]
+    sourceText: str = Field(min_length=1, max_length=200)
+    source: Literal["text", "asr", "realtime", "preference_settings"] = "text"
+    confidence: float = Field(default=0.7, ge=0, le=1)
+    severity: Literal["soft", "hard"] = "soft"
+    explanation: str = Field(min_length=1, max_length=200)
+    assumptions: list[str] = Field(default_factory=list, max_length=8)
+    requiresConfirmation: bool = True
+
+
+class PlanningPatchModel(BaseModel):
+    model_config = {"extra": "forbid"}
+    set: PlanningPatchSet = Field(default_factory=PlanningPatchSet)
+    addPreferences: list[str] = Field(default_factory=list, max_length=30)
+    removePreferences: list[str] = Field(default_factory=list, max_length=30)
+    addCuisines: list[str] = Field(default_factory=list, max_length=30)
+    removeCuisines: list[str] = Field(default_factory=list, max_length=30)
+    addDietaryAllergies: list[str] = Field(default_factory=list, max_length=30)
+    removeDietaryAllergies: list[str] = Field(default_factory=list, max_length=30)
+    addForbiddenItems: list[str] = Field(default_factory=list, max_length=30)
+    removeForbiddenItems: list[str] = Field(default_factory=list, max_length=30)
+    addMobilityLimitations: list[str] = Field(default_factory=list, max_length=30)
+    removeMobilityLimitations: list[str] = Field(default_factory=list, max_length=30)
+    derivedConstraints: list[DerivedTravelConstraintModel] = Field(default_factory=list, max_length=30)
+    placeMentions: list[PlanningPlaceMention] = Field(default_factory=list, max_length=30)
+    dayConstraints: list[PlanningDayConstraint] = Field(default_factory=list, max_length=15)
+    confirmedRequirements: list[str] = Field(default_factory=list, max_length=10)
+    needsClarification: bool = False
+    clarificationQuestions: list[str] = Field(default_factory=list, max_length=3)
+    reply: str = Field(default="我已经记下这次修改。", min_length=1, max_length=2000)
+    transportPlan: PlanningTransportPlan | None = None
+
+
 class PlanIntentResponse(BaseModel):
     model_config = {"extra": "forbid"}
     needsClarification: bool
     clarificationQuestions: list[str] = Field(default_factory=list, max_length=3)
     normalizedRequest: PlanIntentNormalizedRequest
     requestPatch: PlanIntentPatch = Field(default_factory=PlanIntentPatch)
+    planningPatch: PlanningPatchModel | None = None
     explanation: str = Field(min_length=1, max_length=2_000)
     provider: Literal["remote_glm"] = "remote_glm"
     model: str
@@ -135,16 +226,17 @@ REALTIME_PROMPT = """你是“北京旅行”的电话式 AI 路线顾问。用�
 
 PLAN_INTENT_PROMPT = """你是“北京旅行”的规划意图规范化器，只负责理解用户输入，不负责生成行程事实。
 
-必须返回一个 JSON 对象，禁止 Markdown。字段必须严格为：
-{"needsClarification":false,"clarificationQuestions":[],"normalizedRequest":{"userInput":"","city":"北京","days":4,"people":2,"totalBudget":5000,"pace":"relaxed|standard|packed","mode":"self|complete|auto"},"requestPatch":{},"explanation":""}
+必须返回一个 JSON 对象，禁止 Markdown。除兼容字段 requestPatch 外，必须返回 planningPatch：
+{"needsClarification":false,"clarificationQuestions":[],"normalizedRequest":{"userInput":"","city":"北京","days":4,"people":2,"totalBudget":5000,"pace":"relaxed","mode":"auto"},"requestPatch":{},"planningPatch":{"set":{},"addPreferences":[],"removePreferences":[],"addCuisines":[],"removeCuisines":[],"addDietaryAllergies":[],"removeDietaryAllergies":[],"addForbiddenItems":[],"removeForbiddenItems":[],"addMobilityLimitations":[],"removeMobilityLimitations":[],"derivedConstraints":[],"placeMentions":[],"dayConstraints":[],"confirmedRequirements":[],"needsClarification":false,"clarificationQuestions":[],"reply":""},"explanation":""}
 
 规则：
-1. 只可规范化或修正 days、people、totalBudget、pace、mode；没有明确依据时沿用结构化请求。
-2. 不得输出、创造或修改任何地点 ID、坐标、酒店价格、营业时间、门票、余票或交通耗时。
-3. 城市固定为北京。候选地点只用于理解用户已选内容，不能改写其 sourceId 或坐标。
-4. 最多追问三个会阻止规划的关键问题。已有结构化参数不得重复追问。
-5. 过敏、行动能力、夜间与危险项目限制不允许放宽。
-6. requestPatch 只写确实需要修改且有用户原话依据的字段；否则返回空对象。"""
+1. planningPatch 只能表达用户原话中的偏好、限制、日期、预算、交通规则和地点名称/意图；不要生成地点 ID、坐标、酒店价格、营业时间、门票、余票或交通耗时。
+2. 地点只写 name + intent（must_visit/prefer/avoid/remove/replace），由平台随后用高德严格解析。
+3. 过敏、行动能力、夜间与危险项目限制是硬约束，不能放宽；只有用户明确取消时才填 remove 数组。
+4. 一句话包含多个字段时一次性写入；已有信息不要重复追问。最多追问三个真正阻塞规划的问题。
+5. set 中只写本轮明确改变的字段；没有明确依据就留空。数组最多 30 项，文字简短。
+6. 当用户说“父母腿脚不好”“老人走路不便”等话时，除写入 addMobilityLimitations 外，输出带有原话证据的 derivedConstraints；可以提出保守建议，但不得诊断疾病或编造无障碍事实。
+7. 派生约束必须标明 sourceText、confidence、severity、explanation、assumptions 和 requiresConfirmation；硬性限制只能收紧，不能放宽。"""
 
 
 def ai_provider_status() -> dict[str, Any]:

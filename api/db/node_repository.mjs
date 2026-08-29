@@ -22,9 +22,7 @@ import {
 // ── PostgreSQL client (lazy, Serverless-safe) ───────────────────────────────────
 
 let _pool = null;
-let _poolCreatedAt = 0;
 let _poolEnding = false;
-const POOL_MAX_AGE_MS = 5 * 60 * 1000;
 const QUERY_TIMEOUT_MS = 10_000;
 
 function getDatabaseUrl() {
@@ -41,7 +39,7 @@ function toIsoString(date) {
   return String(date);
 }
 
-// Preload pg module once for codec registration
+// Preload the pg module once per warm serverless instance.
 let _pgModule = null;
 async function getPg() {
   if (!_pgModule) _pgModule = await import('pg');
@@ -52,12 +50,10 @@ async function getPool() {
   const url = getDatabaseUrl();
   if (!url) throw new Error('DATABASE_URL is not configured');
 
-  // Return existing pool if it's still open (use pg's idleTimeoutMillis for stale conn recycling)
+  // Reuse the pool across warm serverless invocations. Query and connection
+  // timeouts below provide bounded failure behavior without an extra probe.
   if (_pool && !_poolEnding) {
-    try {
-      await _pool.query('SELECT 1');
-      return _pool;
-    } catch (_) { /* pool unhealthy, recreate below */ }
+    return _pool;
   }
 
   // Gracefully close old pool (only if not already shutting down)
@@ -68,25 +64,14 @@ async function getPool() {
   }
 
   const pg = await getPg();
-  const { builtins } = pg.types;
-
-  // Build json/jsonb/timestamptz codec map
-  const typeOverrides = {};
-  if (builtins) {
-    // json (oid 114) and jsonb (oid 3802): parse to JS object
-    typeOverrides[114] = { parse: (v) => { try { return JSON.parse(v); } catch { return v; } }, serialize: JSON.stringify };
-    typeOverrides[3802] = { parse: (v) => { try { return JSON.parse(v); } catch { return v; } }, serialize: JSON.stringify };
-  }
-
   _pool = new pg.Pool({
     connectionString: url,
     max: 2,
     min: 0,
     idleTimeoutMillis: 60_000,
-    statementTimeoutMillis: QUERY_TIMEOUT_MS,
-    types: Object.keys(typeOverrides).length > 0 ? typeOverrides : undefined,
+    statement_timeout: QUERY_TIMEOUT_MS,
+    connectionTimeoutMillis: QUERY_TIMEOUT_MS,
   });
-  _poolCreatedAt = Date.now();
   return _pool;
 }
 
@@ -192,11 +177,12 @@ async function ensureRefreshJob(jobType, source, category, params, secret, paylo
   if (!isConfigured()) return ['', CacheMissReason.DATABASE_UNAVAILABLE];
   const dedupe = refreshJobDedupeKey(jobType, source, category, params);
   const jobId = crypto.randomUUID();
-  // INSERT ... ON CONFLICT (dedupe_key) DO NOTHING RETURNING id
+  // The unique index is partial (pending/running); use a target-less conflict
+  // clause so PostgreSQL can infer the applicable index.
   const result = await query(
     `INSERT INTO refresh_jobs (id, job_type, dedupe_key, payload_json, status)
      VALUES ($1, $2, $3, $4, 'pending')
-     ON CONFLICT (dedupe_key) DO NOTHING
+     ON CONFLICT DO NOTHING
      RETURNING id`,
     [jobId, jobType, dedupe, payload ? JSON.stringify(payload) : null],
   );
@@ -221,7 +207,6 @@ async function closePool() {
   if (_pool) {
     try { await _pool.end(); } catch (_) {}
     _pool = null;
-    _poolCreatedAt = 0;
   }
 }
 

@@ -6,6 +6,7 @@ import type {
   TravelProviderStatus,
   TravelRoutesResponse,
 } from '../types/travel';
+import type { TravelPlace } from '../types/travel';
 import type { HotelGeoRequest, HotelGeoResponse } from '../types/hotel';
 
 export function fetchTravelConfig(): Promise<TravelProviderStatus> {
@@ -24,7 +25,7 @@ export function searchTravelPlaces(
     page: String(page),
     pageSize: String(pageSize),
   });
-  return apiRequest<TravelPlaceListResponse>(`/api/travel/places?${params.toString()}`);
+  return apiRequest<TravelPlaceListResponse>(`/api/travel/explore?${params.toString()}`);
 }
 
 export function fetchFliggyAttractionEditorial(): Promise<FliggyAttractionEditorialResponse> {
@@ -35,16 +36,28 @@ export function fetchFliggyAttractionEditorial(): Promise<FliggyAttractionEditor
   );
 }
 
+/** Fetch a persisted place snapshot by its provider identity. */
+export function fetchTravelPlaceDetail(
+  source: 'amap' | 'fliggy',
+  sourceId: string,
+  category: 'attraction' | 'restaurant' = 'attraction',
+): Promise<TravelPlace> {
+  const params = new URLSearchParams({ source, sourceId, category });
+  return apiRequest<TravelPlace>(`/api/travel/places/detail?${params.toString()}`, undefined, 8_000);
+}
+
 export function fetchTravelRoutes(
   fromLongitude: number,
   fromLatitude: number,
   toLongitude: number,
   toLatitude: number,
+  mode?: 'transit' | 'driving' | 'walking',
 ): Promise<TravelRoutesResponse> {
   const params = new URLSearchParams({
     origin: `${fromLongitude},${fromLatitude}`,
     destination: `${toLongitude},${toLatitude}`,
   });
+  if (mode) params.set('mode', mode);
   return apiRequest<TravelRoutesResponse>(`/api/travel/routes?${params.toString()}`, undefined, 12_000);
 }
 

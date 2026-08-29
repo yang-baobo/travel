@@ -24,6 +24,14 @@
       "destination": "/api/index"
     },
     {
+      "source": "/api/travel/explore",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/travel/places/detail",
+      "destination": "/api/index"
+    },
+    {
       "source": "/api/travel/attractions/editorial",
       "destination": "/api/flyai_attractions"
     },

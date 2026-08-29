@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Image,
@@ -15,7 +15,8 @@ import type { NativeStackNavigationProp, NativeStackScreenProps } from '@react-n
 import { colors } from '../../theme/colors';
 import { borderRadius, shadow, spacing } from '../../theme/spacing';
 import { useLiveTravelStore } from '../../store/useLiveTravelStore';
-import { buildAmapNavigationUrl } from '../../services/travelDataService';
+import { buildAmapNavigationUrl, fetchTravelPlaceDetail } from '../../services/travelDataService';
+import { ActivityIndicator } from 'react-native';
 import type { ExploreStackParamList } from '../../types';
 
 type Navigation = NativeStackNavigationProp<ExploreStackParamList, 'LivePlaceDetail'>;
@@ -26,18 +27,48 @@ const CATEGORY_LABEL = { attraction: '景点', hotel: '酒店', restaurant: '餐
 export default function LivePlaceDetailScreen() {
   const navigation = useNavigation<Navigation>();
   const route = useRoute<Route>();
-  const place = useLiveTravelStore(state => (
+  const cachedPlace = useLiveTravelStore(state => (
     state.itinerary.find(item => item.id === route.params.placeId)
       || Object.values(state.items).flat().find(item => item.id === route.params.placeId)
   ));
+  const [place, setPlace] = useState(cachedPlace);
+  const [loading, setLoading] = useState(true);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const addToItinerary = useLiveTravelStore(state => state.addToItinerary);
   const inItinerary = useLiveTravelStore(state => state.itinerary.some(item => item.id === route.params.placeId));
+
+  useEffect(() => {
+    if (cachedPlace && !place) setPlace(cachedPlace);
+  }, [cachedPlace, place]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setRefreshError(null);
+    void fetchTravelPlaceDetail(
+      route.params.source || 'amap',
+      route.params.placeId,
+      route.params.category || 'attraction',
+    )
+      .then(remotePlace => {
+        if (!cancelled) setPlace(remotePlace);
+      })
+      .catch(error => {
+        if (!cancelled) setRefreshError(error instanceof Error ? error.message : '详情刷新失败');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [route.params.placeId, route.params.source, route.params.category]);
 
   if (!place) {
     return (
       <View style={styles.missing}>
         <Ionicons name="alert-circle-outline" size={48} color={colors.disabled} />
-        <Text style={styles.missingTitle}>地点信息已失效</Text>
+        {loading ? <ActivityIndicator color={colors.primary} /> : null}
+        <Text style={styles.missingTitle}>{loading ? '正在加载地点详情' : '地点信息暂时不可用'}</Text>
+        {refreshError ? <Text style={styles.sourceText}>{refreshError}</Text> : null}
         <TouchableOpacity onPress={() => navigation.goBack()}><Text style={styles.backText}>返回列表</Text></TouchableOpacity>
       </View>
     );

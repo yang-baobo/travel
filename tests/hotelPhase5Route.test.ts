@@ -12,6 +12,7 @@ import {
   hydrateSelectedHotelGeography,
 } from '../src/services/travelData/hotel/HotelGeoService';
 import { buildRealDurationMatrix } from '../src/utils/realRouteMatrix';
+import { MAX_ROUTE_MATRIX_CONCURRENCY } from '../src/utils/realRouteMatrix';
 import {
   buildAmapRouteSegment,
   mapTransportPreferenceToAmapMode,
@@ -234,5 +235,25 @@ describe('Phase 5 AMap route semantics', () => {
     assert.equal(matrix.durations[1][0], 27);
     assert.equal(matrix.durations[0][0], 0);
     assert.equal(matrix.segments.length, 6);
+    assert.deepEqual(matrix.failedPairs, []);
+  });
+
+  test('matrix limits concurrent provider calls and returns partial failures', async () => {
+    const nodes = Array.from({ length: 5 }, (_, index) => endpoint(`n${index}`, 39.9 + index / 100, 116.4 + index / 100));
+    let active = 0;
+    let peak = 0;
+    const matrix = await buildRealDurationMatrix(nodes, 'transit', transportRule, async (origin, destination) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, 1));
+      active -= 1;
+      if (origin.id === 'n0' && destination.id === 'n1') {
+        return { originId: origin.id, destinationId: destination.id, originName: origin.name, destinationName: destination.name, mode: 'transit', distanceMeters: null, durationMinutes: null, price: null, detail: 'no route', provider: 'amap', calculatedAt: new Date().toISOString(), estimated: false, status: 'no_route' };
+      }
+      return { originId: origin.id, destinationId: destination.id, originName: origin.name, destinationName: destination.name, mode: 'transit', distanceMeters: 1_000, durationMinutes: 10, price: 4, detail: 'ok', provider: 'amap', calculatedAt: new Date().toISOString(), estimated: false, status: 'available' };
+    });
+    assert.ok(peak <= MAX_ROUTE_MATRIX_CONCURRENCY);
+    assert.equal(matrix.failedPairs?.length, 1);
+    assert.equal(matrix.durations[0][1], 0);
   });
 });

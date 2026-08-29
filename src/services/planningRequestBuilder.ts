@@ -64,6 +64,7 @@ export function buildPlanningRequest(input: {
   mode: PlannerMode;
   params: PlannerParams;
   candidates: TravelPlace[];
+  excludedPlaceIds?: string[];
 }): PlanningRequest {
   const preference = usePreferenceStore.getState();
   const blindBox = useBlindBoxStore.getState();
@@ -80,6 +81,14 @@ export function buildPlanningRequest(input: {
     totalBudget: parsePlannerBudget(input.params.budget),
     pace: parsePlannerPace(input.params.pace),
     candidates: input.candidates.map(toPlanningCandidate),
+    mustVisitCandidates: input.mode === 'self' ? input.candidates.map(toPlanningCandidate) : [],
+    preferredCandidates: input.mode === 'complete' ? input.candidates.map(toPlanningCandidate) : input.mode === 'auto' ? input.candidates.map(toPlanningCandidate) : [],
+    excludedPlaceIds: Array.from(new Set(input.excludedPlaceIds || [])),
+    unresolvedPlaceMentions: [],
+    dayConstraints: [],
+    excludedDraftPlaceIds: [],
+    alternativeIndex: 0,
+    revision: 0,
     preferenceSnapshot: {
       hasSetPreferences: preference.hasSetPreferences,
       selectedCategories: [...preference.selectedCategories],

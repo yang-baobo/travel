@@ -26,6 +26,7 @@ interface PlanningSessionState {
   beginSession: (request: PlanningRequest, options?: { entryMode?: PlanningEntryMode; confirmedRequirements?: PlanningRequirementKey[] }) => string;
   updateRequest: (patch: Partial<PlanningRequest>) => void;
   updateRequirement: (key: PlanningRequirementKey, summary: string, source: Exclude<PlanningRequirementProgress['source'], null>) => void;
+  markRequirementMissing: (key: PlanningRequirementKey, summary?: string) => void;
   setEntryMode: (entryMode: PlanningEntryMode) => void;
   setStatus: (status: PlanningSessionStatus) => void;
   addMessage: (message: Omit<PlanningMessage, 'id' | 'createdAt'> & Partial<Pick<PlanningMessage, 'id' | 'createdAt'>>) => void;
@@ -88,6 +89,19 @@ export const usePlanningSessionStore = create<PlanningSessionState>((set, get) =
     session: {
       ...state.session,
       requirements: state.session.requirements.map(item => item.key === key ? ({ ...item, status: 'confirmed', summary, source }) : item),
+      updatedAt: now(),
+    },
+  }) : state),
+
+  markRequirementMissing: (key, summary) => set(state => state.session ? ({
+    session: {
+      ...state.session,
+      requirements: state.session.requirements.map(item => item.key === key ? ({
+        ...item,
+        status: 'missing',
+        source: null,
+        summary: summary || item.summary,
+      }) : item),
       updatedAt: now(),
     },
   }) : state),

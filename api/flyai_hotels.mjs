@@ -4,7 +4,21 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import {
+  CacheMiss,
+  CacheMissReason,
+  ensureRefreshJob,
+  hotelSearchQueryHash,
+  readCache,
+  upsertCache,
+} from './db/node_repository.mjs';
+
 const execFileAsync = promisify(execFile);
+
+// Hotel cache TTLs per DATA_CACHE_EXECUTION_FRAMEWORK.md:
+//   fresh 10 minutes, stale until 30 minutes, expired after that.
+const HOTEL_FRESH_MS = 10 * 60 * 1000;
+const HOTEL_STALE_MS = 30 * 60 * 1000;
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const cliPath = resolve(
   projectRoot,
@@ -67,9 +81,24 @@ function trustedBookingUrl(value) {
 }
 
 function validDate(value) {
-  return typeof value === 'string'
-    && /^\d{4}-\d{2}-\d{2}$/.test(value)
-    && Number.isFinite(Date.parse(`${value}T00:00:00Z`));
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return Number.isFinite(parsed.getTime())
+    && parsed.getUTCFullYear() === year
+    && parsed.getUTCMonth() === month - 1
+    && parsed.getUTCDate() === day;
+}
+
+export function localTodayISO(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 export function normalizeSearchRequest(value) {
@@ -78,6 +107,11 @@ export function normalizeSearchRequest(value) {
   if (!destination || destination.length > 80) throw new TypeError('destination 必须填写');
   if (!validDate(body.checkInDate) || !validDate(body.checkOutDate)) {
     throw new TypeError('入住和退房日期格式必须为 YYYY-MM-DD');
+  }
+  if (body.checkInDate < localTodayISO()) {
+    const error = new TypeError('入住日期不能早于今天，请重新选择日期');
+    error.code = 'HOTEL_DATE_IN_PAST';
+    throw error;
   }
   if (body.checkOutDate <= body.checkInDate) throw new TypeError('退房日期必须晚于入住日期');
   const sortBy = body.sortBy ?? 'none';
@@ -205,6 +239,40 @@ export default async function handler(request, response) {
     return errorResponse(response, 422, code, error instanceof Error ? error.message : '酒店查询参数无效');
   }
 
+  // ── Phase 3 cache: read snapshot before starting the CLI ───────────────────
+  const queryParams = {
+    destination: params.destination,
+    checkInDate: params.checkInDate,
+    checkOutDate: params.checkOutDate,
+    maxReferencePrice: params.maxReferencePrice,
+    stars: params.stars,
+    keyword: params.keyword,
+    poiName: params.poiName,
+    sortBy: params.sortBy,
+  };
+  const cached = await readCache('fliggy', 'hotel_search', queryParams);
+  if (!(cached instanceof CacheMiss) && (cached.tier === 'fresh' || cached.tier === 'stale')) {
+    const payloadOut = cached.payload ?? {};
+    const hotels = Array.isArray(payloadOut.hotels) ? payloadOut.hotels : [];
+    // A stale price snapshot must never masquerade as a live price.
+    const isPriceStale = cached.tier === 'stale';
+    if (cached.tier === 'stale') {
+      // Serve stale immediately; enqueue a deduplicated refresh job.
+      await ensureRefreshJob('hotel', 'fliggy', 'hotel_search', queryParams);
+    }
+    return response.status(200).json({
+      ...payloadOut,
+      meta: {
+        ...payloadOut.meta,
+        cacheStatus: cached.tier,
+        fetchedAt: cached.fetched_at,
+        expiresAt: cached.expires_at,
+        staleUntil: cached.stale_until,
+        isPriceStale,
+      },
+    });
+  }
+
   let stdout;
   try {
     ({ stdout } = await execFileAsync(process.execPath, buildFlyAiArgs(params), {
@@ -215,6 +283,21 @@ export default async function handler(request, response) {
       maxBuffer: 5 * 1024 * 1024,
     }));
   } catch (error) {
+    // Provider failed: try to serve a stale snapshot as graceful degradation
+    // (price marked stale), never expose the provider error to the page.
+    if (!(cached instanceof CacheMiss) && cached.payload?.hotels) {
+      return response.status(200).json({
+        ...cached.payload,
+        meta: {
+          ...cached.payload.meta,
+          cacheStatus: 'stale',
+          fetchedAt: cached.fetched_at,
+          expiresAt: cached.expires_at,
+          staleUntil: cached.stale_until,
+          isPriceStale: true,
+        },
+      });
+    }
     if (error?.killed || error?.signal === 'SIGTERM') {
       return errorResponse(response, 504, 'HOTEL_PROVIDER_TIMEOUT', 'FlyAI 酒店搜索超时');
     }
@@ -239,7 +322,7 @@ export default async function handler(request, response) {
     return errorResponse(response, 502, 'HOTEL_PROVIDER_MALFORMED_RESPONSE', 'FlyAI 响应缺少 itemList 数组');
   }
   const hotels = items.map(item => adaptFlyAiHotel(item, params)).filter(Boolean);
-  response.status(200).json({
+  const responseBody = {
     hotels,
     meta: {
       source: 'fliggy',
@@ -250,5 +333,126 @@ export default async function handler(request, response) {
       nearbyPrecision: params.poiName ? 'candidate_recall_only' : 'not_requested',
       ratingAvailable: hotels.some(hotel => hotel.rating !== null),
     },
+  };
+
+  // Persist: query snapshot + hotel_properties + date-bound price snapshots.
+  const fetchedAt = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + HOTEL_FRESH_MS).toISOString();
+  const staleUntil = new Date(Date.now() + HOTEL_STALE_MS).toISOString();
+  await upsertCache('fliggy', 'hotel_search', queryParams, responseBody, {
+    fetchedAt,
+    expiresAt,
+    staleUntil,
   });
+  await persistHotels(hotels, queryParams, fetchedAt, expiresAt, staleUntil);
+
+  response.status(200).json({
+    ...responseBody,
+    meta: {
+      ...responseBody.meta,
+      cacheStatus: 'miss',
+      fetchedAt,
+      expiresAt,
+      staleUntil,
+      isPriceStale: false,
+    },
+  });
+}
+
+// ── Persistence helpers ────────────────────────────────────────────────────────
+
+/**
+ * Upsert hotel base properties (7-day fresh / 30-day stale) and date-bound
+ * price snapshots (10-min fresh / 30-min stale). A search price never becomes
+ * a hotel's permanent price: prices live only in hotel_price_snapshots tied to
+ * (source_hotel_id, check_in, check_out).
+ */
+async function persistHotels(hotels, queryParams, fetchedAt, expiresAt, staleUntil) {
+  try {
+    const { getPool } = await import('./db/node_repository.mjs');
+    if (!hotels.length) return;
+    const pool = await getPool();
+    if (!pool) return;
+    const qh = hotelSearchQueryHash(queryParams);
+    const now = new Date();
+    const propertyFresh = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const propertyStale = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    for (const hotel of hotels) {
+      await pool.query(
+        `INSERT INTO hotel_properties (
+           source, source_hotel_id, name, city, district, address, star, star_label,
+           rating, review_count, image_url, tags_json, facilities_json,
+           latitude_provider, longitude_provider, booking_url,
+           fetched_at, refreshed_at, expires_at, stale_until
+         ) VALUES (
+           'fliggy', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb,
+           $13, $14, $15, $16, NOW(), $17, $18
+         )
+         ON CONFLICT (source, source_hotel_id) DO UPDATE SET
+           name            = EXCLUDED.name,
+           city            = EXCLUDED.city,
+           district        = EXCLUDED.district,
+           address         = EXCLUDED.address,
+           star            = EXCLUDED.star,
+           star_label      = EXCLUDED.star_label,
+           rating          = EXCLUDED.rating,
+           review_count    = EXCLUDED.review_count,
+           image_url       = EXCLUDED.image_url,
+           tags_json       = EXCLUDED.tags_json,
+           facilities_json = EXCLUDED.facilities_json,
+           latitude_provider  = EXCLUDED.latitude_provider,
+           longitude_provider = EXCLUDED.longitude_provider,
+           booking_url     = EXCLUDED.booking_url,
+           fetched_at      = EXCLUDED.fetched_at,
+           refreshed_at    = NOW(),
+           expires_at      = EXCLUDED.expires_at,
+           stale_until     = EXCLUDED.stale_until`,
+        [
+          hotel.sourceHotelId,
+          hotel.name,
+          hotel.city,
+          hotel.district,
+          hotel.address,
+          hotel.star,
+          hotel.starLabel,
+          hotel.rating,
+          hotel.reviewCount,
+          hotel.imageUrl,
+          JSON.stringify(hotel.tags ?? []),
+          JSON.stringify(hotel.facilities ?? []),
+          hotel.latitude,
+          hotel.longitude,
+          hotel.bookingUrl,
+          fetchedAt,
+          propertyFresh,
+          propertyStale,
+        ],
+      );
+      // Date-bound price snapshot; keyed by hotel + dates (+ guests).
+      await pool.query(
+        `INSERT INTO hotel_price_snapshots (
+           source_hotel_id, check_in, check_out, guests, price, price_type,
+           price_description, room_availability, jump_url, query_hash,
+           fetched_at, expires_at, stale_until
+         ) VALUES ($1, $2, $3, $4, $5, 'search_reference', $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT DO NOTHING`,
+        [
+          hotel.sourceHotelId,
+          queryParams.checkInDate,
+          queryParams.checkOutDate,
+          null,
+          hotel.referencePrice,
+          hotel.priceText,
+          hotel.roomAvailability,
+          hotel.bookingUrl,
+          qh,
+          fetchedAt,
+          expiresAt,
+          staleUntil,
+        ],
+      );
+    }
+  } catch {
+    // Persistence is best-effort; the response still succeeds without DB.
+  }
 }

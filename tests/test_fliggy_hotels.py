@@ -98,6 +98,10 @@ class AdapterTests(unittest.TestCase):
         self.assertIsNone(hotel.latitude)
         self.assertIsNone(hotel.booking_url)
 
+    def test_hotel_search_rejects_past_check_in(self) -> None:
+        with self.assertRaises(ValueError):
+            params(checkInDate="2020-01-01", checkOutDate="2020-01-02")
+
 
 class FakeProvider:
     def __init__(self, items: list[dict[str, object]] | None = None, error: Exception | None = None) -> None:

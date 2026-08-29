@@ -81,6 +81,10 @@ export default function BlindBoxScreen() {
   }
 
   const runGeneration = async (replace = false) => {
+    if (!profile) {
+      Alert.alert('盲盒偏好未准备好', '请先确认旅行偏好后再生成盲盒。');
+      return;
+    }
     if (!/^\d{2}:\d{2}$/.test(controls.timeSlot.start) || !/^\d{2}:\d{2}$/.test(controls.timeSlot.end)) {
       Alert.alert('时间格式不正确', '请按照 15:00 这样的格式填写。');
       return;

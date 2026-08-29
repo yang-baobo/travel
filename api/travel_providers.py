@@ -70,7 +70,12 @@ class ProviderNotConfigured(RuntimeError):
 
 
 class ProviderRequestError(RuntimeError):
-    pass
+    """Safe, structured upstream failure without leaking the signed request."""
+
+    def __init__(self, message: str, *, code: str = "AMAP_PROVIDER_ERROR", retryable: bool = False) -> None:
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
 
 
 def provider_status() -> dict[str, Any]:
@@ -120,14 +125,33 @@ def _amap_request(path: str, params: dict[str, Any]) -> dict[str, Any]:
     try:
         with urlopen(request, timeout=8, context=AMAP_SSL_CONTEXT) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except HTTPError as exc:
         # Do not include the upstream URL in errors because it contains the Key.
-        raise ProviderRequestError("Amap request failed") from exc
+        status = int(getattr(exc, "code", 0) or 0)
+        raise ProviderRequestError(
+            "高德上游请求失败，请稍后重试。",
+            code="AMAP_RATE_LIMITED" if status == 429 else "AMAP_HTTP_ERROR",
+            retryable=status == 429 or status >= 500,
+        ) from exc
+    except URLError as exc:
+        raise ProviderRequestError("高德网络暂时不可用，请稍后重试。", code="AMAP_NETWORK_ERROR", retryable=True) from exc
+    except TimeoutError as exc:
+        raise ProviderRequestError("高德请求超时，请稍后重试。", code="AMAP_TIMEOUT", retryable=True) from exc
+    except json.JSONDecodeError as exc:
+        raise ProviderRequestError("高德返回格式异常。", code="AMAP_MALFORMED_RESPONSE") from exc
 
+    if not isinstance(payload, dict):
+        raise ProviderRequestError("高德返回格式异常。", code="AMAP_MALFORMED_RESPONSE")
     if str(payload.get("status")) != "1":
         info = payload.get("info") or "unknown error"
         infocode = payload.get("infocode") or ""
-        raise ProviderRequestError(f"Amap rejected request: {info} ({infocode})")
+        text = f"{info} {infocode}".lower()
+        rate_limited = any(token in text for token in ("limit", "too fast", "频率", "配额"))
+        raise ProviderRequestError(
+            "高德暂时拒绝了请求，请稍后重试。" if rate_limited else "高德未返回可用数据。",
+            code="AMAP_RATE_LIMITED" if rate_limited else "AMAP_PROVIDER_REJECTED",
+            retryable=rate_limited,
+        )
     with _REQUEST_CACHE_LOCK:
         if len(_REQUEST_CACHE) >= 500:
             expired = [key for key, value in _REQUEST_CACHE.items() if value[0] <= time.monotonic()]
@@ -298,6 +322,32 @@ def search_places(
     }
 
 
+def get_place_detail(source_id: str, category: PlaceCategory = "attraction") -> dict[str, Any] | None:
+    """Fetch one Amap POI by its stable provider id.
+
+    Detail refreshes are deliberately keyed by provider id rather than name so
+    two same-named venues can never exchange photos or addresses.
+    """
+    normalized_id = _string(source_id)
+    if not normalized_id:
+        return None
+    payload = _amap_request(
+        "/v5/place/detail",
+        {
+            "id": normalized_id,
+            "show_fields": "business,photos",
+        },
+    )
+    raw_pois = payload.get("pois")
+    if not isinstance(raw_pois, list):
+        return None
+    for poi in raw_pois:
+        if not isinstance(poi, dict) or _string(poi.get("id")) != normalized_id:
+            continue
+        return _normalize_place(poi, category)
+    return None
+
+
 def search_blind_box_places(
     category: BlindBoxContentCategory,
     keyword: str = "",
@@ -462,9 +512,9 @@ def _parse_walking(payload: dict[str, Any]) -> dict[str, Any] | None:
     return {"time": duration, "distance": distance}
 
 
-def get_routes(origin: str, destination: str) -> dict[str, Any]:
+def get_routes(origin: str, destination: str, mode: Literal["transit", "driving", "walking"] | None = None) -> dict[str, Any]:
     common = {"origin": origin, "destination": destination, "show_fields": "cost"}
-    requests = {
+    all_requests = {
         "transit": (
             "/v5/direction/transit/integrated",
             {**common, "city1": BEIJING["citycode"], "city2": BEIJING["citycode"], "strategy": 0},
@@ -472,7 +522,9 @@ def get_routes(origin: str, destination: str) -> dict[str, Any]:
         "driving": ("/v5/direction/driving", {**common, "strategy": 32}),
         "walking": ("/v5/direction/walking", common),
     }
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    requests = {mode: all_requests[mode]} if mode else all_requests
+    errors: list[ProviderRequestError] = []
+    with ThreadPoolExecutor(max_workers=min(3, len(requests))) as executor:
         futures = {
             name: executor.submit(_amap_request, path, params)
             for name, (path, params) in requests.items()
@@ -481,14 +533,18 @@ def get_routes(origin: str, destination: str) -> dict[str, Any]:
         for name, future in futures.items():
             try:
                 payloads[name] = future.result()
-            except ProviderRequestError:
+            except ProviderRequestError as exc:
                 payloads[name] = None
+                errors.append(exc)
 
-    transit = _parse_transit(payloads["transit"] or {})
-    driving = _parse_driving(payloads["driving"] or {})
-    walking = _parse_walking(payloads["walking"] or {})
+    transit = _parse_transit(payloads.get("transit") or {})
+    driving = _parse_driving(payloads.get("driving") or {})
+    walking = _parse_walking(payloads.get("walking") or {})
     if transit is None and driving is None and walking is None:
-        raise ProviderRequestError("Amap returned no route options")
+        if errors:
+            first = errors[0]
+            raise ProviderRequestError(str(first), code=first.code, retryable=first.retryable)
+        raise ProviderRequestError("高德没有返回可用路线。", code="AMAP_NO_ROUTE", retryable=True)
     return {
         "source": "amap",
         "city": BEIJING,

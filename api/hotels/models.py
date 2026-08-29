@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
+from zoneinfo import ZoneInfo
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -51,6 +53,9 @@ class HotelSearchParams(CamelModel):
 
     @model_validator(mode="after")
     def validate_dates(self) -> "HotelSearchParams":
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        if self.check_in_date < today:
+            raise ValueError("checkInDate cannot be earlier than today")
         if self.check_out_date <= self.check_in_date:
             raise ValueError("checkOutDate must be later than checkInDate")
         return self

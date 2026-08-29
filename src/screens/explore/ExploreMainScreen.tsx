@@ -25,6 +25,7 @@ import { guideRoutes } from '../../data/guideRoutes';
 import { guides } from '../../data/guides';
 import { useRouteStore } from '../../store/useRouteStore';
 import { formatPrice, getZoneName } from '../../utils/formatters';
+import UnifiedExploreScreen from './UnifiedExploreScreen';
 
 type Nav = NativeStackNavigationProp<ExploreStackParamList, 'ExploreMain'>;
 type Params = RouteProp<ExploreStackParamList, 'ExploreMain'>;
@@ -45,12 +46,21 @@ const ZONE_OPTIONS = ['全部', '南山区', '福田区', '罗湖区', '龙岗�
 
 const { width: SW } = Dimensions.get('window');
 
+/**
+ * The public ExploreMain route now uses the real, provider-backed catalog.
+ * The legacy route/guide implementation below is retained for compatibility
+ * with older deep links until those screens are migrated separately.
+ */
 export default function ExploreMainScreen() {
+  return <UnifiedExploreScreen />;
+}
+
+function LegacyExploreMainScreen() {
   const route = useRoute<Params>();
   const navigation = useNavigation<Nav>();
   const { addStop, removeStop, routeStops } = useRouteStore();
 
-  const [activeTab, setActiveTab] = useState<TabKey>(route.params?.tab || 'attractions');
+  const [activeTab, setActiveTab] = useState<TabKey>('attractions');
   const [filterVisible, setFilterVisible] = useState(false);
 
   // Attraction filters

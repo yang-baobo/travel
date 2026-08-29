@@ -36,12 +36,14 @@ export default function PlanningWorkbench({
   onReplace,
   onRetry,
   onCommit,
+  showDraftDetails = true,
 }: {
   session: PlanningSession;
   onClarify: (text: string) => Promise<void>;
   onReplace: () => Promise<void>;
   onRetry: () => Promise<void>;
-  onCommit: () => void;
+  onCommit: () => unknown;
+  showDraftDetails?: boolean;
 }) {
   const [changeText, setChangeText] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
@@ -74,7 +76,7 @@ export default function PlanningWorkbench({
         <View style={styles.headerTop}>
           <View>
             <Text style={styles.eyebrow}>LIVE AI PLANNING</Text>
-            <Text style={styles.title}>{session.patchPreview ? '正式行程修改预览' : '北京路线工作台'}</Text>
+            <Text style={styles.title}>{showDraftDetails ? (session.patchPreview ? '正式行程修改预览' : '北京路线工作台') : '路线生成需要调整'}</Text>
           </View>
           <View style={styles.statusPill}>
             <StatusIcon status={session.status} />
@@ -103,7 +105,7 @@ export default function PlanningWorkbench({
           </View>
         ) : null}
 
-        {draft ? (
+        {draft && showDraftDetails ? (
           <>
             <View style={styles.summaryRow}>
               <View style={styles.summaryMetric}><Text style={styles.metricValue}>{draft.days.length}</Text><Text style={styles.metricLabel}>天路线</Text></View>
@@ -175,7 +177,7 @@ export default function PlanningWorkbench({
         <View style={styles.actions}>
           <Pressable onPress={() => void onRetry()} disabled={busy} style={[styles.secondaryButton, busy && styles.disabled]}><Ionicons name="refresh" size={16} color="#0A756C" /><Text style={styles.secondaryText}>重试</Text></Pressable>
           <Pressable onPress={() => void onReplace()} disabled={busy} style={[styles.secondaryButton, busy && styles.disabled]}><Ionicons name="shuffle" size={16} color="#0A756C" /><Text style={styles.secondaryText}>换一个</Text></Pressable>
-          {draft ? (
+          {draft && showDraftDetails ? (
             <Pressable onPress={commit} disabled={busy || draft.blockingIssues.length > 0} style={[styles.commitButton, (busy || draft.blockingIssues.length > 0) && styles.disabled]}>
               <Ionicons name="checkmark" size={17} color="#FFF" /><Text style={styles.commitText}>确认路线</Text>
             </Pressable>

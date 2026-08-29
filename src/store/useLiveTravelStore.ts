@@ -52,6 +52,10 @@ export const useLiveTravelStore = create<LiveTravelState>((set, get) => ({
 
   search: async (category, keyword = '', append = false) => {
     if (get().loading) return;
+    if (category === 'hotel') {
+      set({ error: '酒店请使用酒店搜索页面，以便提供日期、价格和房型信息。' });
+      return;
+    }
     const normalizedKeyword = keyword.trim();
     const currentPage = get().page[category];
     const page = append ? currentPage + 1 : 1;

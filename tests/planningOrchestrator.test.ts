@@ -127,4 +127,45 @@ describe('Planning Orchestrator', () => {
     assert.notEqual(hotelSort, 'rating');
     assert.deepEqual(hotelStars, [5]);
   });
+
+  test('screens high-effort places and promotes door-to-door transport for mobility limits', async () => {
+    const wall = { ...place('amap:badaling'), name: '八达岭长城', typeName: '风景名胜' };
+    const accessible = { ...place('amap:accessible'), name: '东城区文化馆', typeName: '文化场馆' };
+    const base = planningRequest();
+    const request = planningRequest({
+      mode: 'self',
+      candidates: [
+        { source: 'amap', sourceId: wall.id, name: wall.name, category: wall.category, latitude: wall.location.latitude, longitude: wall.location.longitude, originalPlace: wall },
+        { source: 'amap', sourceId: accessible.id, name: accessible.name, category: accessible.category, latitude: accessible.location.latitude, longitude: accessible.location.longitude, originalPlace: accessible },
+      ],
+      preferenceSnapshot: { ...base.preferenceSnapshot, needLunch: false, needDinner: false, elderlyMode: true },
+      hardConstraints: { ...base.hardConstraints, mobilityLimitations: ['两位同行父母腿脚不便'], maxWalkingMinutesPerDay: 60, maxWalkingMinutesPerSegment: 10 },
+      transportPlan: { primary: 'driving', fallback: 'transit', maxWalkingMinutesPerSegment: 10, reason: '行动便利' },
+      derivedConstraints: [{ id: 'mobility-limited', type: 'limited_mobility', sourceText: '父母腿脚不太好', source: 'text', confidence: 0.92, severity: 'hard', explanation: '减少步行', assumptions: [], requiresConfirmation: true }],
+    });
+    let selectedModes: string[] = [];
+    let reservedMinutes = 0;
+    const orchestrator = createPlanningOrchestrator({
+      getIntent: async () => intent(request),
+      searchPlaces: async category => ({ city: { name: '北京', adcode: '110000', citycode: '010' }, category, source: 'amap', page: 1, pageSize: 1, total: 0, hasMore: false, items: [] }),
+      buildMatrix: async (nodes, mode) => {
+        selectedModes.push(mode);
+        const ids = nodes.map(node => node.id);
+        return { node_ids: ids, durations: ids.map(() => ids.map(() => 20)), segments: [] };
+      },
+      optimize: async payload => {
+        reservedMinutes = payload.days[0].reserved_minutes;
+        return ({
+        solver: 'google-or-tools', status: 'optimized',
+        days: payload.days.map(day => ({ day: day.day, attraction_ids: day.day === 1 ? ['amap:accessible'] : [], stops: day.day === 1 ? [{ attraction_id: 'amap:accessible', arrival_minute: 540, end_minute: 660 }] : [], travel_minutes: 0 })),
+        unassigned_attraction_ids: [], total_travel_minutes: 0, solve_time_ms: 1,
+        });
+      },
+    });
+    const result = await orchestrator.plan({ sessionId: 'planning-mobility', request, messages: [] });
+    assert.deepEqual(selectedModes, ['driving']);
+    assert.equal(reservedMinutes, 90);
+    assert.equal(result.draft?.unassignedPlaces.find(item => item.sourceId === wall.id)?.reasonCode, 'mobility_conflict');
+    assert.equal(result.draft?.days[0].stops[0].place.name, accessible.name);
+  });
 });

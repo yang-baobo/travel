@@ -59,6 +59,18 @@ def from_iso(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def to_datetime(value: Any) -> Optional[datetime]:
+    """Normalize asyncpg datetimes and external ISO strings to UTC-aware values."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        normalized = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return normalized.astimezone(timezone.utc)
+    if isinstance(value, str):
+        return from_iso(value)
+    return None
+
+
 class CacheTier(str, Enum):
     FRESH = "fresh"
     STALE = "stale"
@@ -127,11 +139,11 @@ def classify_tier(
     Accepts ISO strings or timezone-aware datetime objects (from asyncpg).
     """
     try:
-        now = now_fn(timezone.utc)
-        exp = from_iso(expires_at) if isinstance(expires_at, str) else expires_at
-        if exp is None:
+        now = to_datetime(now_fn(timezone.utc))
+        exp = to_datetime(expires_at)
+        if now is None or exp is None:
             return CacheTier.MISS
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return CacheTier.MISS
 
     if now < exp:
@@ -139,7 +151,7 @@ def classify_tier(
 
     if stale_until is not None:
         try:
-            stale_dt = from_iso(stale_until) if isinstance(stale_until, str) else stale_until
+            stale_dt = to_datetime(stale_until)
             if stale_dt is None:
                 return CacheTier.EXPIRED
             if now < stale_dt:

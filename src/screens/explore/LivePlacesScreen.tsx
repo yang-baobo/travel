@@ -42,6 +42,10 @@ export default function LivePlacesScreen() {
 
   useEffect(() => {
     setQuery(keyword);
+    if (category === 'hotel') {
+      navigation.replace('HotelList');
+      return;
+    }
     if (items.length === 0) void search(category, keyword, false);
   }, [category]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -59,7 +63,7 @@ export default function LivePlacesScreen() {
           <TouchableOpacity
             key={tab.key}
             style={[styles.tab, category === tab.key && styles.tabActive]}
-            onPress={() => setCategory(tab.key)}
+            onPress={() => tab.key === 'hotel' ? navigation.navigate('HotelList') : setCategory(tab.key)}
           >
             <Text style={[styles.tabText, category === tab.key && styles.tabTextActive]}>{tab.label}</Text>
           </TouchableOpacity>
@@ -106,7 +110,7 @@ export default function LivePlacesScreen() {
           renderItem={({ item }) => (
             <PlaceCard
               place={item}
-              onPress={() => navigation.navigate('LivePlaceDetail', { placeId: item.id })}
+              onPress={() => navigation.navigate('LivePlaceDetail', { placeId: item.id, source: 'amap', category: item.category === 'restaurant' ? 'restaurant' : 'attraction' })}
             />
           )}
           ListHeaderComponent={(

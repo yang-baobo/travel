@@ -17,6 +17,9 @@ export interface RouteOptimizationAttraction {
   opening_windows: [number, number][];
   opening_windows_by_day?: Record<number, [number, number][]>;
   priority: number;
+  required?: boolean;
+  locked_day?: number | null;
+  preferred?: boolean;
 }
 
 export interface RouteOptimizationDay {
@@ -26,6 +29,9 @@ export interface RouteOptimizationDay {
   start_anchor_id: string | null;
   end_anchor_id: string | null;
   reserved_minutes: number;
+  max_walking_minutes?: number;
+  no_night_activity?: boolean;
+  meal_slots?: Array<{ start_minute: number; end_minute: number; duration_minutes: number }>;
 }
 
 export interface RouteOptimizationRequest {
@@ -34,6 +40,7 @@ export interface RouteOptimizationRequest {
   matrix: {
     node_ids: string[];
     durations: number[][];
+    walking_minutes?: number[][];
   };
   max_solve_seconds?: number;
 }
@@ -83,12 +90,13 @@ export function travelPlaceToRouteEndpoint(place: TravelPlace): TravelRouteEndpo
 export async function buildAmapDurationMatrix(
   nodes: TravelRouteEndpoint[],
   preference: TransportPreference,
-  rule: Pick<TransportRule, 'defaultMode'>,
+  rule: Pick<TransportRule, 'defaultMode'> & Partial<Pick<TransportRule, 'walkMaxKm' | 'maxTransitMinutes' | 'maxWalkToStationKm'>>,
   fetchSegment: RouteSegmentFetcher = fetchAmapRouteSegment,
 ): Promise<{
   node_ids: string[];
   durations: number[][];
   segments: TravelRouteSegment[];
+  failedPairs?: Array<{ originId: string; destinationId: string; reason: string }>;
 }> {
   return buildRealDurationMatrix(nodes, preference, rule, fetchSegment);
 }
@@ -101,10 +109,12 @@ export async function optimizeHotelAnchoredTravelRoute(params: {
     priority: number;
     openingWindows?: [number, number][];
     openingWindowsByDay?: Record<number, [number, number][]>;
+    required?: boolean;
+    lockedDay?: number | null;
   }>;
   days: Omit<RouteOptimizationDay, 'start_anchor_id' | 'end_anchor_id'>[];
   preference: TransportPreference;
-  transportRule: Pick<TransportRule, 'defaultMode'>;
+  transportRule: Pick<TransportRule, 'defaultMode'> & Partial<Pick<TransportRule, 'walkMaxKm' | 'maxTransitMinutes' | 'maxWalkToStationKm'>>;
   fetchSegment?: RouteSegmentFetcher;
 }): Promise<{ optimization: RouteOptimizationResponse; segments: TravelRouteSegment[] }> {
   const hotelNode = travelHotelToRouteEndpoint(params.hotel);
@@ -122,6 +132,8 @@ export async function optimizeHotelAnchoredTravelRoute(params: {
       opening_windows: item.openingWindows ?? [[0, 1440]],
       opening_windows_by_day: item.openingWindowsByDay,
       priority: Math.max(0, Math.min(100, Math.round(item.priority))),
+      required: item.required,
+      locked_day: item.lockedDay ?? null,
     })),
     days: params.days.map(day => ({
       ...day,

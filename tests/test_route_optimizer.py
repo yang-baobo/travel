@@ -83,6 +83,32 @@ class RouteOptimizerTest(unittest.TestCase):
         self.assertEqual(result.days[0].attraction_ids, ["must-see"])
         self.assertEqual(result.unassigned_attraction_ids, ["optional"])
 
+    def test_required_stop_is_never_silently_dropped(self) -> None:
+        request = OptimizeRequest.model_validate({
+            "attractions": [{"id": "must-see", "duration_minutes": 180, "opening_windows": [[540, 600]], "required": True}],
+            "days": [{"day": 1, "start_minute": 540, "end_minute": 700, "reserved_minutes": 0}],
+            "matrix": {"node_ids": ["must-see"], "durations": [[0]]},
+            "max_solve_seconds": 1,
+        })
+        result = solve_route(request)
+        self.assertEqual(result.status, "infeasible")
+        self.assertEqual(result.unassigned_attraction_ids, ["must-see"])
+
+    def test_locked_day_only_allows_the_requested_day(self) -> None:
+        request = OptimizeRequest.model_validate({
+            "attractions": [{"id": "day-two", "duration_minutes": 60, "locked_day": 2, "required": True}],
+            "days": [
+                {"day": 1, "start_minute": 540, "end_minute": 900, "reserved_minutes": 0},
+                {"day": 2, "start_minute": 540, "end_minute": 900, "reserved_minutes": 0},
+            ],
+            "matrix": {"node_ids": ["day-two"], "durations": [[0]]},
+            "max_solve_seconds": 1,
+        })
+        result = solve_route(request)
+        self.assertEqual(result.status, "optimized")
+        self.assertEqual(result.days[0].attraction_ids, [])
+        self.assertEqual(result.days[1].attraction_ids, ["day-two"])
+
 
 if __name__ == "__main__":
     unittest.main()

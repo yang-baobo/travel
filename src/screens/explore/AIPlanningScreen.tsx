@@ -17,12 +17,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
 import PlanningWorkbench from '../../components/home/PlanningWorkbench';
+import PlanningConfirmationCard from '../../components/home/PlanningConfirmationCard';
 import RealtimeCallPanel from '../../components/assistant/RealtimeCallPanel';
 import { usePlanningSessionStore } from '../../store/usePlanningSessionStore';
 import { usePreferenceStore } from '../../store/usePreferenceStore';
 import { useVoiceEngine } from '../../hooks/useVoiceEngine';
 import type { ExploreStackParamList } from '../../types';
 import type { PlanningEntryMode } from '../../types/planning';
+import type { PlannerMode } from '../../data/beijingHomeUi';
+import { PLANNER_MODE_COPY } from '../../data/beijingHomeUi';
 import { colors } from '../../theme/colors';
 import {
   collectionProgress,
@@ -38,7 +41,6 @@ import {
   ensurePlanningCollectionPrompt,
   generatePlanningDraft,
   replacePlanningDraft,
-  retryPlanningSession,
   syncPlanningPreferences,
 } from '../../services/planningSessionService';
 
@@ -110,10 +112,7 @@ export default function AIPlanningScreen() {
       } else if (activeRequirement) {
         answerPlanningCollection(value, 'text');
       } else {
-        const store = usePlanningSessionStore.getState();
-        store.addMessage({ role: 'user', text: value, inputMethod: 'text' });
-        store.updateRequest({ userInput: `${session.request.userInput}\n补充：${value}`.trim() });
-        store.addMessage({ role: 'assistant', text: '这条补充已经写入规划请求。确认无误后即可生成真实路线。' });
+        answerPlanningCollection(value, 'text');
       }
       setInput('');
     } finally {
@@ -131,16 +130,53 @@ export default function AIPlanningScreen() {
     if (mode === 'realtime') setRealtimeVisible(true);
   };
 
+  const changeStrategy = (mode: PlannerMode) => {
+    const store = usePlanningSessionStore.getState();
+    if (mode === 'self' && session.request.candidates.length === 0) {
+      store.addMessage({ role: 'assistant', text: '自己选择模式需要至少一个真实高德地点，请先从首页选择景点。' });
+      return;
+    }
+    store.updateRequest({ mode });
+  };
+
   const finishRealtime = (transcript: Array<{ role: 'user' | 'assistant'; text: string }>) => {
     const spoken = transcript.filter(item => item.role === 'user').map(item => item.text.trim()).filter(Boolean).join('；');
-    if (spoken && nextRequirement(usePlanningSessionStore.getState().session!)) {
-      answerPlanningCollection(spoken, 'realtime', false);
+    if (spoken) answerPlanningCollection(spoken, 'realtime', false);
+  };
+
+  const openGeneratedRoute = () => {
+    try {
+      commitDraft();
+      navigation.replace('LiveItinerary');
+      return true;
+    } catch (error) {
+      usePlanningSessionStore.getState().setError(error instanceof Error ? error.message : '路线还不能确认，请先调整条件。');
+      return false;
     }
   };
 
-  const confirm = () => {
-    commitDraft();
-    navigation.replace('LiveItinerary');
+  const confirmAndGenerate = async () => {
+    if (busy || submitting || missing.length > 0) return;
+    setSubmitting(true);
+    try {
+      await generatePlanningDraft();
+      const latest = usePlanningSessionStore.getState().session;
+      if (latest?.draft && latest.status === 'draft_ready') openGeneratedRoute();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const replaceAndOpen = async () => {
+    if (busy || submitting) return;
+    setSubmitting(true);
+    try {
+      await replacePlanningDraft();
+      const latest = usePlanningSessionStore.getState().session;
+      if (latest?.draft && latest.status === 'draft_ready') openGeneratedRoute();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const sourceLabel = session.entryMode === 'selected_places'
@@ -183,6 +219,15 @@ export default function AIPlanningScreen() {
                 );
               })}
             </View>
+            <View style={styles.strategyRow} testID="planning-strategy-selector">
+              <Text style={styles.strategyLabel}>规划策略</Text>
+              {(Object.keys(PLANNER_MODE_COPY) as PlannerMode[]).map(strategy => (
+                <Pressable key={strategy} onPress={() => changeStrategy(strategy)} style={[styles.strategyChip, session.request.mode === strategy && styles.strategyChipActive]}>
+                  <Text style={[styles.strategyText, session.request.mode === strategy && styles.strategyTextActive]}>{PLANNER_MODE_COPY[strategy].label}</Text>
+                </Pressable>
+              ))}
+              <Text style={styles.strategyHint}>输入方式（文字 / ASR / 实时通话）与策略相互独立</Text>
+            </View>
 
             <View style={[styles.preferenceCard, hasSetPreferences && styles.preferenceCardDone]}>
               <View style={styles.preferenceIcon}><Ionicons name={hasSetPreferences ? 'checkmark' : 'options-outline'} size={21} color={hasSetPreferences ? '#FFF' : '#0E8E83'} /></View>
@@ -211,7 +256,7 @@ export default function AIPlanningScreen() {
               </View>
             </View>
 
-            {!session.draft && !busy ? (
+            {!session.draft && !busy && missing.length > 0 ? (
               <View style={styles.chatCard} testID="planning-guided-conversation">
                 <View style={styles.chatHeader}>
                   <View style={styles.aiAvatar}><Ionicons name="sparkles" size={18} color="#FFF" /></View>
@@ -252,22 +297,58 @@ export default function AIPlanningScreen() {
               </View>
             ) : null}
 
+            {missing.length === 0 && !session.draft && !busy && session.status !== 'error' ? (
+              <>
+                <PlanningConfirmationCard session={session} busy={submitting} onConfirm={confirmAndGenerate} />
+                <View style={styles.confirmEditCard} testID="planning-confirmation-edit">
+                  <View style={styles.confirmEditHeading}>
+                    <Ionicons name="create-outline" size={17} color="#0B7B72" />
+                    <View style={styles.confirmEditCopy}>
+                      <Text style={styles.confirmEditTitle}>有内容需要修改？</Text>
+                      <Text style={styles.confirmEditHint}>直接补充一句，确认单会更新；不会提前生成路线。</Text>
+                    </View>
+                  </View>
+                  <View style={styles.composer}>
+                    <TextInput
+                      value={input}
+                      onChangeText={setInput}
+                      multiline
+                      placeholder="例如：预算改为 6000 元，第二天少走路…"
+                      placeholderTextColor="#8CA19C"
+                      style={styles.input}
+                    />
+                    <Pressable onPress={() => void (voice.status === 'listening' ? voice.stopListening() : voice.startListening())} style={[styles.composerButton, voice.status === 'listening' && styles.composerButtonLive]}>
+                      {voice.status === 'transcribing' ? <ActivityIndicator size="small" color="#0E8E83" /> : <Ionicons name={voice.status === 'listening' ? 'stop' : 'mic-outline'} size={19} color="#0E8E83" />}
+                    </Pressable>
+                    <Pressable onPress={() => void submit()} disabled={!input.trim() || submitting} style={[styles.sendButton, (!input.trim() || submitting) && styles.disabled]}><Ionicons name="arrow-up" size={19} color="#FFF" /></Pressable>
+                  </View>
+                </View>
+              </>
+            ) : null}
+
             {busy ? (
               <View style={styles.busyCard}><ActivityIndicator color="#0E9F93" /><View><Text style={styles.busyTitle}>正在生成真实路线</Text><Text style={styles.busyText}>当前步骤来自真实请求进度，不使用假倒计时。</Text></View></View>
             ) : null}
 
-            {session.draft || ['needs_clarification', 'error', 'draft_ready', 'committed'].includes(session.status) ? (
-              <PlanningWorkbench session={session} onClarify={answerPlanningClarification} onReplace={replacePlanningDraft} onRetry={retryPlanningSession} onCommit={confirm} />
+            {['needs_clarification', 'error'].includes(session.status) ? (
+              <PlanningWorkbench
+                session={session}
+                showDraftDetails={false}
+                onClarify={answerPlanningClarification}
+                onReplace={replaceAndOpen}
+                onRetry={confirmAndGenerate}
+                onCommit={openGeneratedRoute}
+              />
             ) : null}
           </Animated.View>
           <View style={{ height: 130 }} />
         </Animated.ScrollView>
 
-        {!session.draft && !busy ? (
+        {!session.draft && !busy && missing.length > 0 ? (
           <View style={styles.bottomBar}>
             <View style={styles.bottomCopy}><Text style={styles.bottomLabel}>必填进度</Text><Text style={styles.bottomProgress}>{progress.confirmed}/{progress.total} 已确认</Text></View>
-            <Pressable onPress={() => void generatePlanningDraft()} disabled={missing.length > 0} style={[styles.generateButton, missing.length > 0 && styles.generateButtonDisabled]} testID="generate-planning-draft">
-              <Ionicons name="sparkles" size={18} color="#FFF" /><Text style={styles.generateText}>{missing.length ? `还差 ${missing.length} 项` : '生成真实路线'}</Text>
+            <Pressable disabled style={[styles.generateButton, styles.generateButtonDisabled]} testID="generate-planning-draft">
+              <Ionicons name="list-outline" size={18} color="#FFF" /><Text style={styles.generateText}>还差 {missing.length} 项</Text>
             </Pressable>
           </View>
         ) : null}
@@ -307,6 +388,13 @@ const styles = StyleSheet.create({
   modeLabelActive: { color: '#FFF' },
   modeDetail: { color: '#748783', fontSize: 9, lineHeight: 14, marginTop: 4 },
   modeDetailActive: { color: 'rgba(255,255,255,0.66)' },
+  strategyRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 10, paddingHorizontal: 2 },
+  strategyLabel: { color: '#53736D', fontSize: 10, fontWeight: '800' },
+  strategyChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#D7E6E1' },
+  strategyChipActive: { backgroundColor: '#0E9F93', borderColor: '#0E9F93' },
+  strategyText: { color: '#4D716A', fontSize: 10, fontWeight: '800' },
+  strategyTextActive: { color: '#FFF' },
+  strategyHint: { color: '#88A09A', fontSize: 9, flexBasis: '100%' },
   preferenceCard: { flexDirection: 'row', alignItems: 'center', gap: 11, marginTop: 14, padding: 15, borderRadius: 22, backgroundColor: '#FFF8E8', borderWidth: 1, borderColor: '#F0D598' },
   preferenceCardDone: { backgroundColor: '#EAF7F4', borderColor: '#CAE9E3' },
   preferenceIcon: { width: 42, height: 42, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0E9F93' },
@@ -351,6 +439,11 @@ const styles = StyleSheet.create({
   sendButton: { width: 44, height: 44, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0E9F93' },
   callInline: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 12, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 14, backgroundColor: '#EFF7F5' },
   callInlineText: { color: '#0B7B72', fontSize: 10, fontWeight: '800' },
+  confirmEditCard: { marginTop: 10, padding: 14, borderRadius: 21, backgroundColor: '#F6FBF9', borderWidth: 1, borderColor: '#D8EAE6' },
+  confirmEditHeading: { flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 10 },
+  confirmEditCopy: { flex: 1 },
+  confirmEditTitle: { color: '#173B35', fontSize: 11, fontWeight: '900' },
+  confirmEditHint: { color: '#7A918C', fontSize: 9, lineHeight: 14, marginTop: 2 },
   busyCard: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14, padding: 17, borderRadius: 22, backgroundColor: '#FFF' },
   busyTitle: { color: '#173B35', fontSize: 13, fontWeight: '900' },
   busyText: { color: '#778985', fontSize: 9, marginTop: 3 },

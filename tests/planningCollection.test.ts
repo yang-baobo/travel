@@ -6,7 +6,7 @@ import {
   buildPlanningRequirements,
   missingRequiredRequirements,
 } from '../src/services/planningCollection';
-import { generatePlanningDraft } from '../src/services/planningSessionService';
+import { answerPlanningCollection, generatePlanningDraft } from '../src/services/planningSessionService';
 import { usePlanningSessionStore } from '../src/store/usePlanningSessionStore';
 import { planningRequest } from './planningFixtures';
 
@@ -83,5 +83,18 @@ describe('Planning information collection', () => {
     assert.equal(session.draft, null);
     assert.ok(missingRequiredRequirements(session).length > 0);
     assert.match(session.messages.at(-1)?.text || '', /还需要确认/);
+  });
+
+  test('keeps the composer editable after required fields are complete', () => {
+    const request = planningRequest({ userInput: '2026-09-15出发2天，2人，预算5000，轻松游，地铁，需要午餐晚餐' });
+    usePlanningSessionStore.getState().beginSession(request, { entryMode: 'chat' });
+    const state = usePlanningSessionStore.getState();
+    state.session!.requirements.filter(item => item.required).forEach(item => {
+      state.updateRequirement(item.key, item.summary, 'text');
+    });
+    answerPlanningCollection('预算改成6000吧', 'text');
+    const updated = usePlanningSessionStore.getState().session!;
+    assert.equal(updated.request.totalBudget, 6000);
+    assert.match(updated.messages.at(-1)?.text || '', /已更新路线条件|已经写入规划请求/);
   });
 });

@@ -48,7 +48,7 @@ export default function ExploreStack() {
       <Stack.Screen
         name="LiveItinerary"
         component={LiveItineraryScreen}
-        options={{ title: '实时路线' }}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="AIPlanning"
@@ -58,7 +58,7 @@ export default function ExploreStack() {
       <Stack.Screen
         name="ExploreMain"
         component={ExploreMainScreen}
-        options={{ title: '历史演示数据' }}
+        options={{ title: '发现北京' }}
       />
       <Stack.Screen
         name="Preference"

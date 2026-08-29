@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { colors } from '../../theme/colors';
@@ -12,6 +14,7 @@ import { useTripStore } from '../../store/useTripStore';
 import { hydrateSelectedHotelGeography } from '../../services/travelData/hotel/HotelGeoService';
 import { fetchAmapRouteSegment } from '../../utils/amapService';
 import { isSameTripHotelContext } from '../../domain/tripHotel';
+import { assessPlaceAccessibility, LIMITED_MOBILITY_DEFAULTS, mobilityExplanation } from '../../services/mobilityPolicy';
 import type { ExploreStackParamList } from '../../types';
 import type { TripHotelContext } from '../../types/hotel';
 import type { TravelPlace, TravelRouteEndpoint, TravelRouteSegment } from '../../types/travel';
@@ -77,6 +80,7 @@ interface DaySchedulePlace {
   startTime: string;
   endTime: string;
   transitMinutes: number | null; // to next node
+  restAfterMinutes: number;
 }
 
 export default function LiveItineraryScreen() {
@@ -123,12 +127,25 @@ export default function LiveItineraryScreen() {
   const travelDays = currentTrip?.request.days || Math.max(1, dateRangeDays(travelStartDate, travelReturnDate));
   const dailyStartTime = currentTrip?.request.preferenceSnapshot.dailyStartTime || preference.dailyStartTime;
   const dailyEndTime = currentTrip?.request.preferenceSnapshot.dailyEndTime || preference.dailyEndTime;
-  const transportPreference = currentTrip?.request.preferenceSnapshot.transportPreference || preference.transportPref;
+  // Derived mobility constraints may promote door-to-door driving even when the
+  // original preference was left as "any". Keep the itinerary route lookup in
+  // sync with the structured planning request rather than the raw preference.
+  const transportPreference = currentTrip?.request.transportPlan?.primary
+    || currentTrip?.request.preferenceSnapshot.transportPreference
+    || preference.transportPref;
   const transportRule = currentTrip?.request.preferenceSnapshot.transportRule || preference.transportRule;
   const travelDates = useMemo(
     () => Array.from({ length: travelDays }, (_, i) => addDaysISO(travelStartDate, i)),
     [travelStartDate, travelDays],
   );
+  const dayTimeWindows = useMemo(() => Object.fromEntries(travelDates.map((_, index) => {
+    const day = index + 1;
+    const constraint = currentTrip?.request.dayConstraints?.find(item => item.day === day);
+    return [day, {
+      start: constraint?.startTime || dailyStartTime || '09:00',
+      end: constraint?.endTime || dailyEndTime || '19:00',
+    }];
+  })), [currentTrip?.request.dayConstraints, dailyEndTime, dailyStartTime, travelDates]);
 
   const tripContext = useMemo<TripHotelContext>(() => ({
     destination: currentTrip?.city || preference.selectedCity,
@@ -243,10 +260,15 @@ export default function LiveItineraryScreen() {
     return () => { active = false; };
   }, [signature, transportPreference, transportRule.defaultMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const mobilityActive = Boolean(currentTrip?.request.hardConstraints.mobilityLimitations.length
+    || currentTrip?.request.preferenceSnapshot.elderlyMode
+    || (currentTrip?.request.derivedConstraints || []).some(item => ['limited_mobility', 'elderly_companions', 'low_walking'].includes(item.type)));
+  const mobilityNotes = useMemo(() => currentTrip ? mobilityExplanation(currentTrip.request) : [], [currentTrip]);
+
   // 计算每天时间轴：每个地点的到达/离开时间
   const daySchedules = useMemo(() => {
     return dayPlans.map(plan => {
-      const startMinute = timeToMinutes(dailyStartTime || '09:00');
+      const startMinute = timeToMinutes(dayTimeWindows[plan.day]?.start || '09:00');
       let cursor = startMinute;
       const entries: DaySchedulePlace[] = [];
       plan.nodes.forEach((node, index) => {
@@ -258,12 +280,30 @@ export default function LiveItineraryScreen() {
         const transitMinutes = nextSegment?.segment?.status === 'available'
           ? nextSegment.segment.durationMinutes
           : null;
-        entries.push({ node, startTime: minutesToClock(startTime), endTime: minutesToClock(endTime), transitMinutes });
-        cursor = endTime + (transitMinutes ?? 0);
+        const restAfterMinutes = mobilityActive && node.place && index < plan.nodes.length - 1
+          ? LIMITED_MOBILITY_DEFAULTS.minimumRestMinutes
+          : 0;
+        entries.push({ node, startTime: minutesToClock(startTime), endTime: minutesToClock(endTime), transitMinutes, restAfterMinutes });
+        cursor = endTime + restAfterMinutes + (transitMinutes ?? 0);
       });
       return { plan, entries, dayEndMinute: cursor };
     });
-  }, [dailyStartTime, dayPlans, itemMeta, segments]);
+  }, [dayPlans, dayTimeWindows, itemMeta, mobilityActive, segments]);
+
+  const tripOverview = useMemo(() => ({
+    stops: itinerary.length,
+    plannedTravelMinutes: currentTrip?.days.reduce((sum, day) => sum + day.travelMinutes, 0)
+      || Object.values(segments).reduce((sum, item) => sum + (item.segment?.durationMinutes || 0), 0),
+    knownCost: currentTrip?.knownCostTotal ?? null,
+  }), [currentTrip, itinerary.length, segments]);
+
+  const walkingMinutesByDay = useMemo(() => Object.fromEntries(dayPlans.map(plan => [
+    plan.day,
+    plan.nodes.slice(0, -1).reduce((sum, _, index) => {
+      const segment = segments[`${plan.day}-${index}`]?.segment;
+      return sum + (segment?.mode === 'walking' ? segment.durationMinutes || 0 : 0);
+    }, 0),
+  ])), [dayPlans, segments]);
 
   const dayAssignCounts = useMemo(() => {
     const counts: Record<number, number> = {};
@@ -303,7 +343,25 @@ export default function LiveItineraryScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <LinearGradient colors={['#073E38', '#0A645A', '#0E8B7F']} style={styles.hero}>
+        <View style={styles.heroTopRow}>
+          <TouchableOpacity onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home')} style={styles.heroBack}>
+            <Ionicons name="arrow-back" size={20} color="#FFF" />
+          </TouchableOpacity>
+          <View style={styles.heroCopy}>
+            <Text style={styles.heroEyebrow}>YOUR COMPLETE BEIJING JOURNEY</Text>
+            <Text style={styles.heroTitle}>{currentTrip?.title || '北京完整行程'}</Text>
+            <Text style={styles.heroSubtitle}>从每天出发到返回酒店，地点时间与每段真实交通都在这里展开。</Text>
+          </View>
+        </View>
+        <View style={styles.heroMetrics}>
+          <View style={styles.heroMetric}><Text style={styles.heroMetricValue}>{travelDays}</Text><Text style={styles.heroMetricLabel}>天</Text></View>
+          <View style={styles.heroMetric}><Text style={styles.heroMetricValue}>{tripOverview.stops}</Text><Text style={styles.heroMetricLabel}>地点</Text></View>
+          <View style={styles.heroMetric}><Text style={styles.heroMetricValue}>{tripOverview.plannedTravelMinutes}</Text><Text style={styles.heroMetricLabel}>交通分钟</Text></View>
+          <View style={styles.heroMetric}><Text style={styles.heroMetricValue}>{tripOverview.knownCost === null ? '待核实' : `¥${Math.round(tripOverview.knownCost)}`}</Text><Text style={styles.heroMetricLabel}>已知费用</Text></View>
+        </View>
+      </LinearGradient>
       <ScrollView contentContainerStyle={styles.content}>
         {/* 出行天数 / 日期设置 */}
         <View style={styles.tripSetupCard}>
@@ -314,7 +372,7 @@ export default function LiveItineraryScreen() {
                 {formatDayDate(travelStartDate)} 出发 · 共{travelDays}天{Math.max(0, travelDays - 1)}晚
               </Text>
               <Text style={styles.tripSetupText}>
-                每天 {dailyStartTime || '09:00'}-{dailyEndTime || '19:00'} 安排行程；地点会按天分组并标出游玩时间
+                默认每天 {dailyStartTime || '09:00'}-{dailyEndTime || '19:00'}；有单日要求时按当天设置执行
               </Text>
             </View>
             <TouchableOpacity style={styles.tripSetupBtn} onPress={() => setShowTripSetup(true)}>
@@ -339,6 +397,28 @@ export default function LiveItineraryScreen() {
             })}
           </ScrollView>
         </View>
+
+        {activeHotel && (
+          <View style={styles.hotelStayCard}>
+            <View style={styles.hotelStayIcon}><Ionicons name="bed-outline" size={21} color="#FFF" /></View>
+            <View style={styles.hotelStayCopy}>
+              <Text style={styles.hotelStayEyebrow}>YOUR HOTEL · 每天路线锚点</Text>
+              <Text style={styles.hotelStayName}>{activeHotel.name}</Text>
+              <Text style={styles.hotelStayMeta}>{activeHotel.address || activeHotel.district || '北京'} · {activeHotel.checkInDate} 入住 / {activeHotel.checkOutDate} 退房</Text>
+              <Text style={styles.hotelStayMeta}>{activeHotel.rating !== null ? `评分 ${activeHotel.rating}` : '评分暂无'} · {activeHotel.referencePrice !== null ? `参考价 ¥${activeHotel.referencePrice}` : '价格待查询'}</Text>
+            </View>
+          </View>
+        )}
+
+        {mobilityActive && mobilityNotes.length > 0 && (
+          <View style={styles.mobilityPlanCard} testID="mobility-plan-summary">
+            <Ionicons name="walk-outline" size={19} color="#0B7B72" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.mobilityPlanTitle}>已按行动便利模式安排</Text>
+              {mobilityNotes.map((note, index) => <Text key={`${note}-${index}`} style={styles.mobilityPlanText}>• {note}</Text>)}
+            </View>
+          </View>
+        )}
 
         {activeHotel && (
           <View style={styles.geoStatusRow} testID="selected-hotel-geo-status">
@@ -366,8 +446,19 @@ export default function LiveItineraryScreen() {
           </View>
         )}
 
+        {currentTrip?.warnings.length ? (
+          <View style={styles.tripWarningCard}>
+            <Ionicons name="information-circle-outline" size={18} color="#9A6A21" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.tripWarningTitle}>需要你留意</Text>
+              {currentTrip.warnings.map((warning, index) => <Text key={`${warning}-${index}`} style={styles.tripWarningText}>• {warning}</Text>)}
+            </View>
+          </View>
+        ) : null}
+
         {daySchedules.map(({ plan, entries, dayEndMinute }) => {
-          const endLimit = timeToMinutes(dailyEndTime || '19:00');
+          const dayWindow = dayTimeWindows[plan.day] || { start: dailyStartTime || '09:00', end: dailyEndTime || '19:00' };
+          const endLimit = timeToMinutes(dayWindow.end);
           const overflow = plan.places.length > 0 && dayEndMinute > endLimit;
           return (
             <View key={plan.day} style={styles.daySection}>
@@ -376,7 +467,7 @@ export default function LiveItineraryScreen() {
                 <Text style={styles.dayHeaderText}>{formatDayDate(plan.date)}</Text>
                 {plan.places.length > 0 && (
                   <Text style={styles.dayHeaderMeta}>
-                    {minutesToClock(timeToMinutes(dailyStartTime || '09:00'))} - {minutesToClock(dayEndMinute)}
+                    {dayWindow.start} - {minutesToClock(dayEndMinute)} · 步行{walkingMinutesByDay[plan.day] || 0}分钟
                   </Text>
                 )}
                 {loading && <ActivityIndicator size="small" color={colors.primary} />}
@@ -385,7 +476,7 @@ export default function LiveItineraryScreen() {
                 <View style={styles.overflowNote}>
                   <Ionicons name="time-outline" size={14} color={colors.warningYellow} />
                   <Text style={styles.overflowText}>
-                    当天安排已超过 {dailyEndTime || '19:00'}，建议缩短游玩时长或把地点移到其他天
+                    当天安排已超过 {dayWindow.end}，建议缩短游玩时长或把地点移到其他天
                   </Text>
                 </View>
               )}
@@ -432,10 +523,24 @@ export default function LiveItineraryScreen() {
                       />
                     ) : null}
 
+                    {entry.restAfterMinutes > 0 && (
+                      <View style={styles.restPill}>
+                        <Ionicons name="cafe-outline" size={14} color="#9A6A21" />
+                        <Text style={styles.restPillText}>建议休息 {entry.restAfterMinutes} 分钟</Text>
+                      </View>
+                    )}
+
                     {nextEntry && (
                       <View style={styles.segmentWrap}>
                         <View style={styles.line} />
-                        <RouteSegment result={segments[segmentKey]} loading={loading && !segments[segmentKey]} />
+                        <RouteSegment
+                          result={segments[segmentKey]}
+                          loading={loading && !segments[segmentKey]}
+                          originName={node.endpoint.name}
+                          destinationName={nextEntry.node.endpoint.name}
+                          departAt={entry.endTime}
+                          arriveAt={nextEntry.startTime}
+                        />
                       </View>
                     )}
                   </View>
@@ -506,7 +611,7 @@ export default function LiveItineraryScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -525,6 +630,7 @@ function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays
   onRemove: (placeId: string) => void;
 }) {
   const isBlindBox = place.tags.includes('旅行盲盒');
+  const accessibility = assessPlaceAccessibility(place);
   return (
     <View style={styles.stopCard}>
       <View style={styles.order}>
@@ -537,6 +643,13 @@ function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays
         </View>
         <Text style={styles.stopMeta}>
           {CATEGORY_LABEL[place.category]} · {place.district || '北京'}
+        </Text>
+        <Text style={[styles.accessibilityText, accessibility.status === 'limited' && styles.accessibilityLimited]}>
+          {accessibility.status === 'verified'
+            ? '行动便利信息：公开字段有无障碍/接驳线索'
+            : accessibility.status === 'limited'
+              ? '行动提示：可能包含较多步行、坡道或台阶'
+              : '行动信息：景区内部步行与无障碍条件待核实'}
         </Text>
         <TouchableOpacity style={styles.timeRow} onPress={onEditDuration}>
           <Ionicons name="time-outline" size={14} color={colors.primary} />
@@ -666,17 +779,26 @@ function TripSetupModal({ visible, startDate, days, onClose, onApply }: {
   );
 }
 
-function RouteSegment({ result, loading }: { result?: SegmentResult; loading: boolean }) {
+function RouteSegment({ result, loading, originName, destinationName, departAt, arriveAt }: {
+  result?: SegmentResult;
+  loading: boolean;
+  originName: string;
+  destinationName: string;
+  departAt: string;
+  arriveAt: string;
+}) {
   if (loading) {
-    return <View style={styles.routeCard}><ActivityIndicator size="small" color={colors.primary} /><Text style={styles.loadingText}>正在获取交通方案…</Text></View>;
+    return <View style={styles.routeCard}><ActivityIndicator size="small" color={colors.primary} /><Text style={styles.loadingText}>{originName} → {destinationName} · 正在获取交通方案…</Text></View>;
   }
   if (!result?.segment || result.segment.status !== 'available' || result.segment.durationMinutes === null) {
-    return <View style={[styles.routeCard, styles.routeError]}><Ionicons name="alert-circle-outline" size={18} color={colors.priceRed} /><Text style={styles.routeErrorText}>{result?.error || '暂无可用路线'}</Text></View>;
+    return <View style={[styles.routeCard, styles.routeError]}><Ionicons name="alert-circle-outline" size={18} color={colors.priceRed} /><View style={{ flex: 1 }}><Text style={styles.routeEndpoint}>{originName} → {destinationName}</Text><Text style={styles.routeErrorText}>{result?.error || '暂无可用路线'}</Text></View></View>;
   }
   const route = result.segment;
   return (
     <View style={styles.routeCard}>
       <View style={styles.mainRoute}>
+        <Text style={styles.routeEndpoint}>{originName} → {destinationName}</Text>
+        <Text style={styles.routeClock}>{departAt} 出发 · {arriveAt} 到达</Text>
         <View style={styles.modeTitleRow}>
           <Ionicons name={route.mode === 'transit' ? 'subway-outline' : route.mode === 'walking' ? 'walk-outline' : 'car-outline'} size={19} color={colors.primary} />
           <Text style={styles.modeTitle}>{MODE_LABEL[route.mode]}</Text>
@@ -695,7 +817,18 @@ function RouteSegment({ result, loading }: { result?: SegmentResult; loading: bo
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.lg, paddingBottom: 40 },
+  hero: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 22, overflow: 'hidden' },
+  heroTopRow: { width: '100%', maxWidth: 980, alignSelf: 'center', flexDirection: 'row', alignItems: 'flex-start', gap: 13 },
+  heroBack: { width: 42, height: 42, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
+  heroCopy: { flex: 1 },
+  heroEyebrow: { color: '#77DDCD', fontSize: 8, fontWeight: '900', letterSpacing: 1.35 },
+  heroTitle: { color: '#FFF', fontSize: 24, fontWeight: '900', marginTop: 5 },
+  heroSubtitle: { color: 'rgba(255,255,255,0.70)', fontSize: 11, lineHeight: 17, marginTop: 5 },
+  heroMetrics: { width: '100%', maxWidth: 980, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 18 },
+  heroMetric: { minWidth: 76, flexGrow: 1, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.10)' },
+  heroMetricValue: { color: '#FFF', fontSize: 14, fontWeight: '900' },
+  heroMetricLabel: { color: 'rgba(255,255,255,0.62)', fontSize: 8, marginTop: 3 },
+  content: { width: '100%', maxWidth: 980, alignSelf: 'center', padding: spacing.lg, paddingBottom: 40 },
   tripSetupCard: { backgroundColor: '#E6F5F1', borderRadius: borderRadius.lg, padding: spacing.lg, marginBottom: spacing.md },
   tripSetupHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   tripSetupCopy: { flex: 1 },
@@ -711,9 +844,21 @@ const styles = StyleSheet.create({
   dayChipDateActive: { color: colors.primaryDark },
   dayChipCount: { color: colors.textSecondary, fontSize: 10, marginTop: 2 },
   dayChipCountActive: { color: colors.primary },
+  hotelStayCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderRadius: 22, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#DCE8E4', marginBottom: spacing.sm, ...shadow.light },
+  hotelStayIcon: { width: 46, height: 46, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.hotel },
+  hotelStayCopy: { flex: 1 },
+  hotelStayEyebrow: { color: colors.hotel, fontSize: 8, fontWeight: '900', letterSpacing: 1 },
+  hotelStayName: { color: colors.textPrimary, fontSize: 15, fontWeight: '900', marginTop: 3 },
+  hotelStayMeta: { color: colors.textSecondary, fontSize: 10, lineHeight: 15, marginTop: 3 },
+  mobilityPlanCard: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, padding: 14, borderRadius: 18, backgroundColor: '#EFF9F6', borderWidth: 1, borderColor: '#D1ECE6', marginBottom: spacing.md },
+  mobilityPlanTitle: { color: '#15534B', fontSize: 11, fontWeight: '900', marginBottom: 3 },
+  mobilityPlanText: { color: '#5B7C75', fontSize: 9, lineHeight: 15 },
   geoStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.surface, borderRadius: borderRadius.md, padding: spacing.md, marginBottom: spacing.md },
   geoStatusText: { flex: 1, color: colors.textSecondary, fontSize: 11, lineHeight: 16 },
   retryGeoText: { color: colors.primary, fontSize: 12, fontWeight: '700' },
+  tripWarningCard: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 13, borderRadius: 17, backgroundColor: '#FFF8E8', borderWidth: 1, borderColor: '#F1D9A3', marginBottom: spacing.md },
+  tripWarningTitle: { color: '#845B1F', fontSize: 11, fontWeight: '900' },
+  tripWarningText: { color: '#8A6A39', fontSize: 10, lineHeight: 16, marginTop: 3 },
   daySection: { marginBottom: spacing.lg },
   dayHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
   dayBadge: { backgroundColor: colors.primary, borderRadius: borderRadius.full, paddingHorizontal: spacing.md, paddingVertical: 4 },
@@ -722,6 +867,8 @@ const styles = StyleSheet.create({
   dayHeaderMeta: { color: colors.textSecondary, fontSize: 11 },
   overflowNote: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#FFF7ED', borderRadius: borderRadius.sm, padding: spacing.sm, marginBottom: spacing.sm },
   overflowText: { flex: 1, color: '#9A3412', fontSize: 11, lineHeight: 16 },
+  restPill: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, marginLeft: 34, marginVertical: 5, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 999, backgroundColor: '#FFF8E8' },
+  restPillText: { color: '#946B28', fontSize: 9, fontWeight: '800' },
   freeDayCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: borderRadius.md, padding: spacing.md, backgroundColor: colors.surface },
   freeDayText: { flex: 1, color: colors.textSecondary, fontSize: 11, lineHeight: 17 },
   stopCard: { minHeight: 88, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: borderRadius.lg, padding: spacing.md, ...shadow.light },
@@ -733,6 +880,8 @@ const styles = StyleSheet.create({
   blindBadge: { backgroundColor: '#EDE9FE', borderRadius: 99, paddingHorizontal: 7, paddingVertical: 2 },
   blindBadgeText: { color: '#6E58A5', fontSize: 10, fontWeight: '800' },
   stopMeta: { marginTop: 3, color: colors.textSecondary, fontSize: 11 },
+  accessibilityText: { color: '#6C8A83', fontSize: 9, lineHeight: 14, marginTop: 5 },
+  accessibilityLimited: { color: '#A16139' },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, backgroundColor: colors.background, borderRadius: borderRadius.sm, paddingHorizontal: spacing.sm, paddingVertical: 5, alignSelf: 'flex-start' },
   timeText: { color: colors.primary, fontSize: 11, fontWeight: '700' },
   dayControlRow: { flexDirection: 'row', gap: 6, marginTop: 6 },
@@ -748,6 +897,8 @@ const styles = StyleSheet.create({
   line: { width: 2, backgroundColor: colors.primaryLight, marginRight: spacing.md, borderRadius: 2 },
   routeCard: { flex: 1, minHeight: 64, backgroundColor: colors.surface, borderRadius: borderRadius.md, padding: spacing.md, justifyContent: 'center' },
   mainRoute: { width: '100%' },
+  routeEndpoint: { color: colors.textPrimary, fontSize: 11, fontWeight: '800', lineHeight: 16 },
+  routeClock: { color: colors.primary, fontSize: 10, fontWeight: '700', marginTop: 3, marginBottom: 8 },
   modeTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   modeTitle: { color: colors.textPrimary, fontSize: 13, fontWeight: '700' },
   routeTime: { marginLeft: 'auto', color: colors.primary, fontSize: 14, fontWeight: '800' },

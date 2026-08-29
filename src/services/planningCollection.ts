@@ -8,6 +8,9 @@ import type {
   PlanningRequirementProgress,
   PlanningSession,
 } from '../types/planning';
+import { applyPlanningPatch, buildLocalPlanningPatch, emptyPlanningPatch, validatePlanningPatch } from './planningPatch';
+
+export { applyPlanningPatch, buildLocalPlanningPatch, emptyPlanningPatch, validatePlanningPatch } from './planningPatch';
 
 type RequirementDefinition = Pick<PlanningRequirementProgress, 'key' | 'label' | 'required'>;
 
@@ -129,7 +132,24 @@ export function applyPlanningAnswer(
   request: PlanningRequest,
   activeKey: PlanningRequirementKey,
   text: string,
+  inputMethod: PlanningInputMethod = 'text',
 ): { request: PlanningRequest; confirmedKeys: PlanningRequirementKey[] } {
+  // Keep this synchronous API for existing callers, but use the same strict
+  // patch parser as the asynchronous GLM path. This fixes colloquial inputs
+  // such as “6000吧” and preserves place/constraint intent for later resolve.
+  const parsedPatch = buildLocalPlanningPatch(text, request, inputMethod, activeKey);
+  const patchedRequest = applyPlanningPatch(
+    { ...request, userInput: [request.userInput.trim(), `补充：${text.trim()}`].filter(Boolean).join('\n') },
+    parsedPatch,
+    text,
+  );
+  const parsedConfirmed = new Set<PlanningRequirementKey>(parsedPatch.confirmedRequirements);
+  if (/按当前|就这样|可以|没问题|确认|默认/.test(text)) parsedConfirmed.add(activeKey);
+  return { request: patchedRequest, confirmedKeys: [...parsedConfirmed] };
+
+  /*
+     Legacy parser retained below for source compatibility; all execution now
+     returns through the strict patch path above.
   const answer = text.trim();
   let next: PlanningRequest = {
     ...request,
@@ -208,6 +228,7 @@ export function applyPlanningAnswer(
   if (activeKey === 'preferences' && answer.length >= 2) confirmed.add('preferences');
   if (activeKey === 'constraints' && answer.length >= 2) confirmed.add('constraints');
   return { request: next, confirmedKeys: [...confirmed] };
+  */
 }
 
 export function quickAnswersFor(key: PlanningRequirementKey, request: PlanningRequest): string[] {

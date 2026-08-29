@@ -4,11 +4,12 @@ import type {
   PlanningPace,
   PlanningRequest,
 } from '../types/planning';
+import { buildLocalPlanningPatch, validatePlanningPatch } from '../services/planningPatch';
 
 const MODES = ['self', 'complete', 'auto'] as const;
 const PACES = ['relaxed', 'standard', 'packed'] as const;
 const PROVIDERS = ['remote_glm', 'local_fallback', 'unavailable'] as const;
-const TOP_LEVEL_KEYS = new Set(['needsClarification', 'clarificationQuestions', 'normalizedRequest', 'requestPatch', 'explanation', 'provider', 'model']);
+const TOP_LEVEL_KEYS = new Set(['needsClarification', 'clarificationQuestions', 'normalizedRequest', 'requestPatch', 'planningPatch', 'explanation', 'provider', 'model']);
 const NORMALIZED_KEYS = new Set(['userInput', 'city', 'days', 'people', 'totalBudget', 'pace', 'mode']);
 const PATCH_KEYS = new Set(['days', 'people', 'totalBudget', 'pace', 'mode']);
 
@@ -91,6 +92,8 @@ export function validatePlanIntent(value: unknown): PlanIntent {
   if (value.needsClarification && questions.length === 0) {
     throw new Error('需要澄清时必须提供问题');
   }
+  let planningPatch: PlanIntent['planningPatch'];
+  if (value.planningPatch !== undefined) planningPatch = validatePlanningPatch(value.planningPatch);
   return {
     needsClarification: value.needsClarification,
     clarificationQuestions: questions,
@@ -99,6 +102,7 @@ export function validatePlanIntent(value: unknown): PlanIntent {
     explanation: value.explanation.trim(),
     provider: value.provider as PlanIntent['provider'],
     model: value.model as string | null,
+    planningPatch,
   };
 }
 
@@ -125,5 +129,6 @@ export function buildLocalPlanIntent(request: PlanningRequest, _reason: string):
     explanation: 'GLM 当前不可用，已使用本地规则仅规范化你已确认的输入；不会生成地点或价格。',
     provider: 'local_fallback',
     model: null,
+    planningPatch: buildLocalPlanningPatch(request.userInput, request, request.inputMethod),
   };
 }

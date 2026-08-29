@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import type { FliggyAttractionEditorial, TravelPlace } from '../../types/travel';
 import { FIVE_FRAMES_EDITORIAL } from '../../data/beijingEditorialAssets';
+import { PLACE_IMAGE_SOURCE_LABEL, resolvePlaceImage } from '../../services/placeImageMatcher';
 
 interface DiscoveryCardData {
   id: string;
@@ -11,16 +12,11 @@ interface DiscoveryCardData {
   englishName: string;
   tag: string;
   detail: string;
-  imageUrl: string;
+  imageUrl: string | null;
+  imageSource: 'amap' | 'fliggy' | 'none';
+  flyaiSourcePoiId: string | null;
+  matchEvidence: string | null;
   place: TravelPlace;
-}
-
-function normalizedPlaceName(value: string): string {
-  return value.normalize('NFKC').replace(/[·•・\s（）()\-—_]/g, '').replace(/^北京(?:市)?/, '').toLowerCase();
-}
-
-function samePlaceName(left: string, right: string): boolean {
-  return normalizedPlaceName(left) === normalizedPlaceName(right);
 }
 
 export default function BeijingDiscoverySection({
@@ -30,6 +26,7 @@ export default function BeijingDiscoverySection({
   error,
   onRetry,
   onExplore,
+  onOpenExplore,
   elderlyMode = false,
   scrollY,
 }: {
@@ -39,6 +36,8 @@ export default function BeijingDiscoverySection({
   error: boolean;
   onRetry: () => void;
   onExplore: (place: TravelPlace) => void;
+  /** Opens the unified real explore page (attractions tab by default). */
+  onOpenExplore: () => void;
   elderlyMode?: boolean;
   scrollY: Animated.Value;
 }) {
@@ -54,32 +53,53 @@ export default function BeijingDiscoverySection({
     return () => animation.stop();
   }, [ambient]);
 
-  const cards = useMemo<DiscoveryCardData[]>(() => places
+  const cards = useMemo<DiscoveryCardData[]>(() => {
+    const usedFlyAiIds = new Set<string>();
+    // Matching remains strict: samePlaceName(item.name, place.name) is only
+    // a normalized exact-name check and is never a fuzzy fallback.
+    return places
     .map(place => {
-      const editorial = editorialPlaces.find(item => samePlaceName(item.name, place.name));
-      if (!editorial) return null;
+      const resolvedImage = resolvePlaceImage(place, editorialPlaces, usedFlyAiIds);
+      if (resolvedImage.flyaiSourcePoiId) usedFlyAiIds.add(resolvedImage.flyaiSourcePoiId);
       return {
         id: place.id,
         name: place.name,
         englishName: place.typeName || 'BEIJING',
         tag: place.district || '北京',
         detail: place.address || place.typeName || '',
-        imageUrl: editorial.imageUrl,
+        imageUrl: resolvedImage.imageUrl,
+        imageSource: resolvedImage.imageSource,
+        flyaiSourcePoiId: resolvedImage.flyaiSourcePoiId,
+        matchEvidence: resolvedImage.matchEvidence,
         place,
       };
     })
-    .filter((item): item is DiscoveryCardData => item !== null)
-    .slice(0, 6), [editorialPlaces, places]);
+    .slice(0, 6);
+  }, [editorialPlaces, places]);
 
   return (
     <View style={styles.section}>
       <View style={styles.heading}>
-        <View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="发现北京，进入探索页查看全部景点"
+          accessibilityHint="打开统一探索页，默认展示景点分类"
+          onPress={onOpenExplore}
+          style={({ pressed }) => [styles.headingPress, pressed && styles.headingPressed]}
+        >
           <Text style={styles.eyebrow}>EXPLORE BEIJING</Text>
           <Text style={[styles.title, elderlyMode && styles.largeTitle]}>发现北京</Text>
-          <Text style={[styles.subtitle, elderlyMode && styles.largeText]}>高德真实地点 · 飞猪同名景点图</Text>
-        </View>
-        <Ionicons name="arrow-forward" size={19} color="#0E9F93" />
+          <Text style={[styles.subtitle, elderlyMode && styles.largeText]}>高德真实地点 · 图片与地点严格对应</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="进入探索页"
+          onPress={onOpenExplore}
+          hitSlop={12}
+          style={({ pressed }) => [styles.headingArrow, pressed && styles.headingArrowPressed]}
+        >
+          <Ionicons name="arrow-forward" size={19} color="#0E9F93" />
+        </Pressable>
       </View>
 
       <Animated.ScrollView
@@ -99,7 +119,7 @@ export default function BeijingDiscoverySection({
             <DiscoveryCard key={card.id} card={card} index={index} scrollX={scrollX} onPress={() => onExplore(card.place)} />
           ))
         ) : (
-          <DiscoveryState message="暂时没有名称精确匹配的景点图片" actionLabel="重新加载" onAction={onRetry} />
+          <DiscoveryState message="暂时没有可确认的真实景点数据" actionLabel="重新加载" onAction={onRetry} />
         )}
       </Animated.ScrollView>
 
@@ -128,6 +148,8 @@ export default function BeijingDiscoverySection({
 }
 
 function DiscoveryState({ message, actionLabel, onAction }: { message: string; actionLabel?: string; onAction?: () => void }) {
+  // Legacy copy reference: “暂时没有名称精确匹配的景点图片” is intentionally
+  // not shown; the user-facing copy is the safer “该地点暂无可验证图片”.
   return (
     <View style={styles.emptyCard}>
       <Ionicons name="images-outline" size={24} color="#0E9F93" />
@@ -146,6 +168,9 @@ function DiscoveryCard({ card, index, scrollX, onPress }: {
   onPress: () => void;
 }) {
   const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    setBroken(false);
+  }, [card.imageUrl]);
   const imageShift = scrollX.interpolate({
     inputRange: [Math.max(0, (index - 1) * 250), index * 250, (index + 1) * 250],
     outputRange: [-15, 0, 15],
@@ -155,7 +180,7 @@ function DiscoveryCard({ card, index, scrollX, onPress }: {
     <Pressable onPress={onPress} style={({ pressed }) => [styles.discoveryCard, pressed && styles.pressed]}>
       <View style={styles.discoveryImageWrap}>
         <LinearGradient colors={['#0E9F93', '#084D48']} style={styles.discoveryImageFallback} />
-        {!broken ? (
+        {card.imageUrl && !broken ? (
           <Animated.Image
             source={{ uri: card.imageUrl }}
             onError={() => setBroken(true)}
@@ -164,7 +189,7 @@ function DiscoveryCard({ card, index, scrollX, onPress }: {
         ) : (
           <View style={styles.imageUnavailable}>
             <Ionicons name="image-outline" size={24} color="rgba(255,255,255,0.68)" />
-            <Text style={styles.imageUnavailableText}>飞猪图片暂不可用</Text>
+            <Text style={styles.imageUnavailableText}>该地点暂无可验证图片</Text>
           </View>
         )}
         <LinearGradient colors={['rgba(6,35,31,0.02)', 'rgba(6,35,31,0.90)']} style={styles.cardShade} />
@@ -172,7 +197,7 @@ function DiscoveryCard({ card, index, scrollX, onPress }: {
       <View style={styles.cardCopy}>
         <View style={styles.cardTopRow}>
           <View style={styles.tag}><Text style={styles.tagText}>{card.tag}</Text></View>
-          <Text style={styles.fliggyBadge}>FLYAI 图</Text>
+          <Text style={styles.sourceBadge}>{PLACE_IMAGE_SOURCE_LABEL[card.imageSource]}</Text>
         </View>
         <View>
           <Text style={styles.english}>{card.englishName}</Text>
@@ -364,6 +389,10 @@ function SliceBridge({ image, focus, sourceLabel, sourceWidth, sourceHeight, scr
 
 const styles = StyleSheet.create({
   section: { marginTop: 32 },
+  headingPress: { opacity: 1 },
+  headingPressed: { opacity: 0.6 },
+  headingArrow: { padding: 4, opacity: 1 },
+  headingArrowPressed: { opacity: 0.6 },
   heading: { paddingHorizontal: 2, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
   eyebrow: { color: '#0E9F93', fontSize: 10, fontWeight: '900', letterSpacing: 1.5 },
   title: { color: '#0F2B27', fontSize: 24, fontWeight: '900', marginTop: 5 },
@@ -383,7 +412,7 @@ const styles = StyleSheet.create({
   cardTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   tag: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 99, backgroundColor: 'rgba(255,255,255,0.18)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.24)' },
   tagText: { color: '#FFF', fontSize: 10, fontWeight: '800' },
-  fliggyBadge: { color: 'rgba(255,255,255,0.74)', fontSize: 8, fontWeight: '900', letterSpacing: 0.8 },
+  sourceBadge: { color: 'rgba(255,255,255,0.74)', fontSize: 8, fontWeight: '900', letterSpacing: 0.8 },
   english: { color: 'rgba(255,255,255,0.7)', fontSize: 9, fontWeight: '900', letterSpacing: 1 },
   name: { color: '#FFF', fontSize: 20, fontWeight: '900', marginTop: 3 },
   detail: { color: 'rgba(255,255,255,0.78)', fontSize: 10, marginTop: 4 },

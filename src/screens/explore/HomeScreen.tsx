@@ -287,7 +287,14 @@ export default function HomeScreen() {
 
   const handleToggleCandidate = (candidate: PlannerCandidate) => {
     if (mode === 'auto') {
-      setAutoPlanIds(ids => ids.includes(candidate.id) ? ids.filter(id => id !== candidate.id) : [...ids, candidate.id]);
+      setAutoPlanIds(ids => {
+        if (ids.includes(candidate.id)) {
+          setIgnoredIds(current => current.includes(candidate.id) ? current : [...current, candidate.id]);
+          return ids.filter(id => id !== candidate.id);
+        }
+        setIgnoredIds(current => current.filter(id => id !== candidate.id));
+        return [...ids, candidate.id];
+      });
       return;
     }
     setSelectedIds(ids => ids.includes(candidate.id) ? ids.filter(id => id !== candidate.id) : [...ids, candidate.id]);
@@ -309,7 +316,10 @@ export default function HomeScreen() {
 
   const handleAutoReplace = (candidate: PlannerCandidate) => {
     const replacement = plannerCandidates.find(item => item.id !== candidate.id && !autoPlanIds.includes(item.id));
-    if (replacement) setAutoPlanIds(ids => ids.map(id => id === candidate.id ? replacement.id : id));
+    if (replacement) {
+      setAutoPlanIds(ids => ids.map(id => id === candidate.id ? replacement.id : id));
+      setIgnoredIds(ids => ids.includes(candidate.id) ? ids : [...ids, candidate.id]);
+    }
     else setInput(current => `${current.trim()} 请把“${candidate.name}”换成更符合我偏好的真实北京地点。`.trim());
   };
 
@@ -323,7 +333,11 @@ export default function HomeScreen() {
     inputMethod: method,
     mode,
     params,
-    candidates: mode === 'auto' ? [] : featured.filter(place => activePlanIds.includes(place.id)),
+    // Auto candidates are real AMap POIs too. Keeping them in the request
+    // makes the home selection observable by the planner instead of silently
+    // discarding autoPlanIds.
+    candidates: featured.filter(place => activePlanIds.includes(place.id)),
+    excludedPlaceIds: ignoredIds,
   });
 
   const enterPlanning = (entryMode: PlanningEntryMode, method: PlanningInputMethod, launchRealtime = false) => {
@@ -599,6 +613,7 @@ export default function HomeScreen() {
             elderlyMode={elderlyMode}
             scrollY={scrollY}
             onExplore={place => navigation.navigate('LivePlaceDetail', { placeId: place.id })}
+            onOpenExplore={() => navigation.navigate('ExploreMain', { tab: 'attractions' })}
           />
 
           <View style={styles.serviceSection}>

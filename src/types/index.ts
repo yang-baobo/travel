@@ -440,9 +440,9 @@ export type ExploreStackParamList = {
   AIPlanning: { launchRealtime?: boolean } | undefined;
   BlindBox: undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
-  LivePlaceDetail: { placeId: string };
+  LivePlaceDetail: { placeId: string; source?: 'amap' | 'fliggy'; category?: 'attraction' | 'restaurant' };
   LiveItinerary: undefined;
-  ExploreMain: { tab?: 'attractions' | 'routes' | 'guides' };
+  ExploreMain: { tab?: 'attractions' | 'hotels' | 'restaurants' };
   Preference: { returnToPlanning?: boolean } | undefined;
   Recommendation: undefined;
   AttractionDetail: { attractionId: string };
@@ -463,7 +463,7 @@ export type CustomStackParamList = {
   CustomHome: undefined;
   BlindBox: undefined;
   LivePlaces: { category?: 'attraction' | 'hotel' | 'restaurant' };
-  LivePlaceDetail: { placeId: string };
+  LivePlaceDetail: { placeId: string; source?: 'amap' | 'fliggy'; category?: 'attraction' | 'restaurant' };
   LiveItinerary: undefined;
   HotelList: undefined;
   RoutePlan: undefined;

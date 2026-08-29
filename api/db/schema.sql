@@ -2,6 +2,8 @@
 -- Idempotent: safe to run multiple times with CREATE TABLE IF NOT EXISTS
 -- Run with: psql $DATABASE_URL -f api/db/schema.sql
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- ── travel_places ────────────────────────────────────────────────────────────
 -- Persisted POI entities: attractions and restaurants from Amap.
 -- Unique by (source, source_id); stable data kept for weeks.
@@ -154,3 +156,85 @@ CREATE TABLE IF NOT EXISTS _schema_version (
 INSERT INTO _schema_version (version, applied_at)
 VALUES (1, NOW())
 ON CONFLICT (version) DO NOTHING;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- v2 additions (unified explore + image provenance + hotel price snapshots)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- ── place_images ────────────────────────────────────────────────────────────
+-- Every image is bound to the exact (source, source_entity_id) that returned it.
+-- Cross-source pairing is only allowed via place_image_matches with sufficient
+-- confidence; fuzzy-name or index-based pairing is never persisted here.
+CREATE TABLE IF NOT EXISTS place_images (
+    id                SERIAL PRIMARY KEY,
+    source            TEXT      NOT NULL,             -- 'amap' | 'fliggy'
+    source_entity_id  TEXT      NOT NULL,             -- amap POI id or fliggy poi/hotel id
+    entity_type       TEXT      NOT NULL DEFAULT 'place',  -- 'place' | 'hotel'
+    image_type        TEXT      NOT NULL DEFAULT 'primary', -- 'primary' | 'hotelExterior' | 'room' | 'facility' | 'restaurant' | 'gallery'
+    url               TEXT      NOT NULL,
+    attribution       TEXT,                            -- human-readable source label
+    storage_allowed   BOOLEAN,                         -- only set when licence is confirmed
+    fetched_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at        TIMESTAMPTZ,
+    UNIQUE (source, source_entity_id, image_type, url)
+);
+CREATE INDEX IF NOT EXISTS idx_place_images_entity ON place_images(source, source_entity_id);
+
+-- ── place_image_matches ─────────────────────────────────────────────────────
+-- Cross-source image evidence. Below-threshold rows stay pending manual review
+-- and MUST NOT be used for display.
+CREATE TABLE IF NOT EXISTS place_image_matches (
+    id                 SERIAL PRIMARY KEY,
+    amap_source_id     TEXT      NOT NULL,
+    flyai_source_id    TEXT      NOT NULL,
+    match_confidence   DOUBLE PRECISION NOT NULL,
+    match_evidence     JSONB     NOT NULL,             -- name/city/district/address/geo facts
+    matched_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    matched_by         TEXT      NOT NULL DEFAULT 'rule:v1',
+    approved           BOOLEAN   NOT NULL DEFAULT FALSE, -- manual review gate
+    UNIQUE (amap_source_id, flyai_source_id)
+);
+
+-- ── hotel_price_snapshots ───────────────────────────────────────────────────
+-- Date-bound dynamic pricing kept separate from hotel_properties so one query's
+-- price can never become a hotel's permanent price.
+CREATE TABLE IF NOT EXISTS hotel_price_snapshots (
+    id                SERIAL PRIMARY KEY,
+    source_hotel_id   TEXT      NOT NULL,
+    check_in          DATE      NOT NULL,
+    check_out         DATE      NOT NULL,
+    guests            INTEGER,
+    price             DOUBLE PRECISION,
+    price_type        TEXT      NOT NULL DEFAULT 'search_reference',
+    price_description TEXT,
+    room_availability TEXT,
+    jump_url          TEXT,
+    query_hash        TEXT,
+    fetched_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at        TIMESTAMPTZ NOT NULL,            -- 10 min fresh boundary
+    stale_until       TIMESTAMPTZ NOT NULL             -- 30 min hard limit
+);
+CREATE INDEX IF NOT EXISTS idx_hotel_price_snapshots_lookup
+    ON hotel_price_snapshots(source_hotel_id, check_in, check_out, fetched_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hotel_price_snapshots_query
+    ON hotel_price_snapshots(source_hotel_id, check_in, check_out, query_hash);
+
+-- Additional columns for travel_places (idempotent, additive only)
+ALTER TABLE travel_places ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE travel_places ADD COLUMN IF NOT EXISTS type_name TEXT;
+ALTER TABLE travel_places ADD COLUMN IF NOT EXISTS type_code TEXT;
+ALTER TABLE travel_places ADD COLUMN IF NOT EXISTS business_area TEXT;
+ALTER TABLE travel_places ADD COLUMN IF NOT EXISTS booking_url TEXT;
+ALTER TABLE travel_places ADD COLUMN IF NOT EXISTS stale_until TIMESTAMPTZ;
+ALTER TABLE travel_places ADD COLUMN IF NOT EXISTS fetched_at TIMESTAMPTZ;
+
+-- Additional columns for hotel_properties (idempotent, additive only)
+ALTER TABLE hotel_properties ADD COLUMN IF NOT EXISTS latitude_provider DOUBLE PRECISION;
+ALTER TABLE hotel_properties ADD COLUMN IF NOT EXISTS longitude_provider DOUBLE PRECISION;
+ALTER TABLE hotel_properties ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE hotel_properties ADD COLUMN IF NOT EXISTS booking_url TEXT;
+ALTER TABLE hotel_properties ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE hotel_properties ADD COLUMN IF NOT EXISTS fetched_at TIMESTAMPTZ;
+ALTER TABLE hotel_properties ADD COLUMN IF NOT EXISTS stale_until TIMESTAMPTZ;
+
+INSERT INTO _schema_version (version, applied_at) VALUES (2, NOW()) ON CONFLICT (version) DO NOTHING;

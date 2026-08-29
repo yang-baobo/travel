@@ -15,10 +15,11 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .hash import query_hash
-from .models import CacheEntry, CacheTier, RefreshJob, classify_tier, now_iso, parse_iso
+from .models import CacheEntry, CacheTier, RefreshJob, classify_tier, now_iso, parse_iso, to_datetime
 
 try:
     from ..db.connection import get_connection, is_configured as _db_configured
@@ -89,16 +90,16 @@ async def _fetchrow(
     *args: Any,
     timeout: float = 5.0,
 ) -> Optional[dict[str, Any]]:
-    """Fetch a single row, returning None on any failure."""
+    """Fetch one row; distinguish an empty result from a database failure."""
     if not _is_db_ready():
-        return None
+        raise RuntimeError("database_unavailable")
     try:
         async with asyncio.timeout(timeout):
             async with get_connection() as conn:
                 record = await conn.fetchrow(query, *args)
                 return dict(record) if record else None
-    except Exception:
-        return None
+    except Exception as exc:
+        raise RuntimeError("database_unavailable") from exc
 
 
 async def _fetch(
@@ -146,17 +147,17 @@ async def read_cache(
     if not _is_db_ready():
         return CacheMiss(reason=CacheMissReason.DATABASE_UNAVAILABLE)
 
-    # Separate DB reachability check from query execution
-    # so we can distinguish "DB down" from "query returned no rows"
-    if not await _db_reachable():
-        return CacheMiss(reason=CacheMissReason.DATABASE_UNAVAILABLE)
-
     qh = query_hash(source, category, params)
-    row = await _fetchrow(
-        "SELECT query_hash, payload_json, fetched_at, expires_at, stale_until "
-        "FROM cache_entries WHERE query_hash = $1",
-        qh,
-    )
+    try:
+        row = await _fetchrow(
+            "SELECT query_hash, payload_json, fetched_at, expires_at, stale_until "
+            "FROM cache_entries WHERE query_hash = $1",
+            qh,
+        )
+    except RuntimeError as exc:
+        if str(exc) == "database_unavailable":
+            return CacheMiss(reason=CacheMissReason.DATABASE_UNAVAILABLE)
+        raise
     if row is None:
         # DB is reachable but no matching record
         return CacheMiss(reason=CacheMissReason.NOT_FOUND)
@@ -181,9 +182,9 @@ async def upsert_cache(
     category: str,
     params: dict[str, Any],
     payload: dict[str, Any],
-    fetched_at: Optional[str] = None,
-    expires_at: Optional[str] = None,
-    stale_until: Optional[str] = None,
+    fetched_at: Optional[Any] = None,
+    expires_at: Optional[Any] = None,
+    stale_until: Optional[Any] = None,
     response_json: Optional[dict[str, Any]] = None,
     request_json: Optional[dict[str, Any]] = None,
 ) -> bool:
@@ -193,9 +194,11 @@ async def upsert_cache(
     On failure, caller continues with third-party fetch — no exception raised.
     """
     qh = query_hash(source, category, params)
-    ts = fetched_at or now_iso()
+    ts = to_datetime(fetched_at) or datetime.now(timezone.utc)
+    expiry = to_datetime(expires_at)
+    stale_boundary = to_datetime(stale_until)
 
-    if expires_at is None:
+    if expiry is None:
         return False  # caller must supply expires_at
 
     if _is_db_ready():
@@ -223,8 +226,8 @@ async def upsert_cache(
                         _jsonb(params),
                         _jsonb(payload),
                         ts,
-                        expires_at,
-                        stale_until,
+                        expiry,
+                        stale_boundary,
                     )
                     # Also upsert into table-specific cache if provided
                     if response_json is not None and source == "fliggy" and category == "hotel_search":
@@ -243,8 +246,8 @@ async def upsert_cache(
                             _jsonb(request_json or params),
                             _jsonb(response_json),
                             ts,
-                            expires_at,
-                            stale_until,
+                            expiry,
+                            stale_boundary,
                         )
             return True
         except Exception:
@@ -259,7 +262,7 @@ async def invalidate_cache(
 ) -> bool:
     """Mark a cache entry as EXPIRED by setting expires_at = now. Returns True on success."""
     qh = query_hash(source, category, params)
-    now = now_iso()
+    now = datetime.now(timezone.utc)
     result = await _execute(
         "UPDATE cache_entries SET expires_at = $1, stale_until = $1 WHERE query_hash = $2",
         now, qh,
@@ -269,7 +272,7 @@ async def invalidate_cache(
 
 async def invalidate_hotel_query(query_hash: str) -> bool:
     """Invalidate a specific hotel_search_cache entry by hash."""
-    now = now_iso()
+    now = datetime.now(timezone.utc)
     result = await _execute(
         "UPDATE hotel_search_cache SET expires_at = $1, stale_until = $1 WHERE query_hash = $2",
         now, query_hash,
@@ -310,7 +313,7 @@ async def ensure_refresh_job(
                     INSERT INTO refresh_jobs
                         (id, job_type, dedupe_key, payload_json, status)
                     VALUES ($1, $2, $3, $4, 'pending')
-                    ON CONFLICT (dedupe_key) DO NOTHING
+                    ON CONFLICT DO NOTHING
                     RETURNING id
                     """,
                     str(uuid.uuid4()), job_type, dedupe, _jsonb(payload),
@@ -341,7 +344,7 @@ async def mark_refresh_job_done(
 ) -> bool:
     """Mark a refresh job as completed or failed. Returns True on success."""
     status = "done" if ok else "failed"
-    now = now_iso()
+    now = datetime.now(timezone.utc)
     # Never store raw exception messages — only safe error codes
     safe_code = error_code if error_code and not _contains_sensitive(error_code) else None
     safe_msg = None  # error_message is never stored

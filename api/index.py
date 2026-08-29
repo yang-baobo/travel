@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 import re
+import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -50,6 +52,9 @@ try:
         provider_status,
         search_places,
     )
+    from .place_cache import explore_places, get_place_detail
+    from .cache.models import CacheTier, now_iso
+    from .cache.repository import CacheMiss, ensure_refresh_job, read_cache, upsert_cache
 except ImportError:  # Vercel can load this module without a package context.
     from ai import (  # type: ignore[no-redef]
         AIChatRequest,
@@ -87,6 +92,9 @@ except ImportError:  # Vercel can load this module without a package context.
         provider_status,
         search_places,
     )
+    from place_cache import explore_places, get_place_detail  # type: ignore[no-redef]
+    from cache.models import CacheTier, now_iso  # type: ignore[no-redef]
+    from cache.repository import CacheMiss, ensure_refresh_job, read_cache, upsert_cache  # type: ignore[no-redef]
 
 
 class AttractionInput(BaseModel):
@@ -95,6 +103,9 @@ class AttractionInput(BaseModel):
     opening_windows: list[tuple[int, int]] = Field(default_factory=lambda: [(0, 1440)])
     opening_windows_by_day: dict[int, list[tuple[int, int]]] | None = None
     priority: int = Field(default=50, ge=0, le=100)
+    required: bool = False
+    locked_day: int | None = Field(default=None, ge=1, le=15)
+    preferred: bool = False
 
 
 class DayInput(BaseModel):
@@ -104,11 +115,15 @@ class DayInput(BaseModel):
     start_anchor_id: str | None = None
     end_anchor_id: str | None = None
     reserved_minutes: int = Field(default=0, ge=0, le=720)
+    max_walking_minutes: int | None = Field(default=None, ge=1, le=1440)
+    no_night_activity: bool = False
+    meal_slots: list[dict[str, int]] = Field(default_factory=list, max_length=6)
 
 
 class MatrixInput(BaseModel):
     node_ids: list[str]
     durations: list[list[int]]
+    walking_minutes: list[list[int]] | None = None
 
 
 class OptimizeRequest(BaseModel):
@@ -215,7 +230,10 @@ def solve_route(payload: OptimizeRequest) -> OptimizeResponse:
         from_matrix = matrix_index.get(from_source)
         to_matrix = matrix_index.get(to_source)
         if from_matrix is None or to_matrix is None:
-            return 15
+            # Missing legs are not estimated. Keep them effectively
+            # infeasible so a caller cannot mistake a placeholder duration
+            # for real traffic data.
+            return 1_000_000
         return int(payload.matrix.durations[from_matrix][to_matrix])
 
     def transit_callback(from_index: int, to_index: int) -> int:
@@ -231,6 +249,29 @@ def solve_route(payload: OptimizeRequest) -> OptimizeResponse:
     time_dimension = routing.GetDimensionOrDie("Time")
     time_dimension.SetSpanCostCoefficientForAllVehicles(2)
 
+    # When the caller supplies a walking matrix, enforce each day's walking
+    # budget inside the solver instead of reporting it only after generation.
+    if payload.matrix.walking_minutes is not None:
+        walking_matrix = payload.matrix.walking_minutes
+
+        def walking_minutes(from_node: int, to_node: int) -> int:
+            from_source = node_source_ids[from_node]
+            to_source = node_source_ids[to_node]
+            if not from_source or not to_source or from_source == to_source:
+                return 0
+            fi = matrix_index.get(from_source)
+            ti = matrix_index.get(to_source)
+            if fi is None or ti is None or fi >= len(walking_matrix) or ti >= len(walking_matrix[fi]):
+                return 0
+            return max(0, int(walking_matrix[fi][ti]))
+
+        def walking_callback(from_index: int, to_index: int) -> int:
+            return walking_minutes(manager.IndexToNode(from_index), manager.IndexToNode(to_index))
+
+        walking_index = routing.RegisterTransitCallback(walking_callback)
+        capacities = [day.max_walking_minutes if day.max_walking_minutes is not None else 1_440 for day in days]
+        routing.AddDimensionWithVehicleCapacity(walking_index, 0, capacities, True, "Walking")
+
     for vehicle, day in enumerate(days):
         day_offset = (day.day - 1) * 1440
         start_at = day_offset + day.start_minute
@@ -245,6 +286,8 @@ def solve_route(payload: OptimizeRequest) -> OptimizeResponse:
         allowed: list[tuple[int, int]] = []
         default_windows = attraction.opening_windows or [(0, 1440)]
         for day in days:
+            if attraction.locked_day is not None and attraction.locked_day != day.day:
+                continue
             raw_windows = (
                 attraction.opening_windows_by_day[day.day]
                 if attraction.opening_windows_by_day is not None and day.day in attraction.opening_windows_by_day
@@ -275,10 +318,12 @@ def solve_route(payload: OptimizeRequest) -> OptimizeResponse:
             # An optional node with an impossible time range will be dropped.
             time_var.SetRange(0, 0)
 
-        # Missing a stop costs far more than route minutes. Priority breaks ties
-        # when the selected day windows cannot fit every attraction.
-        penalty = 1_000_000 + attraction.priority * 10_000
-        routing.AddDisjunction([routing_index], penalty)
+        # Required/must-visit nodes have no disjunction and therefore cannot be
+        # silently dropped. Optional recommendations keep a large, explainable
+        # penalty so the solver prefers them when time allows.
+        if not attraction.required:
+            penalty = 1_000_000 + attraction.priority * 10_000
+            routing.AddDisjunction([routing_index], penalty)
 
     search = pywrapcp.DefaultRoutingSearchParameters()
     search.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
@@ -401,14 +446,28 @@ async def ai_realtime(websocket: WebSocket) -> None:
 
 
 @app.get("/api/travel/places")
-def travel_places(
+async def travel_places(
     category: Literal["attraction", "hotel", "restaurant"],
     keyword: str = Query(default="", max_length=60),
     page: int = Query(default=1, ge=1, le=100),
     page_size: int = Query(default=20, alias="pageSize", ge=1, le=25),
 ) -> dict:
+    """
+    Unified place listing backed by the PostgreSQL cache layer.
+
+    Delegates to /api/travel/explore for attraction/restaurant (cached).
+    For hotel queries, delegates to the FlyAI search pipeline.
+    """
+    if category == "hotel":
+        # Hotel listings require the FlyAI search pipeline with trip context.
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "USE_HOTEL_SEARCH", "message": "hotel listings use /api/travel/hotels/search"},
+        )
     try:
-        return search_places(category, keyword, page, page_size)
+        return await explore_places(category, "北京", keyword, page, page_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_CATEGORY", "message": str(exc)}) from exc
     except ProviderNotConfigured as exc:
         raise HTTPException(
             status_code=503,
@@ -417,20 +476,99 @@ def travel_places(
     except ProviderRequestError as exc:
         raise HTTPException(
             status_code=502,
-            detail={"code": "PROVIDER_REQUEST_FAILED", "message": str(exc)},
+            detail={"code": exc.code, "message": str(exc)},
         ) from exc
 
 
 @app.get("/api/travel/attractions/editorial")
-def travel_attraction_editorial() -> dict:
-    """Return FlyAI photos bound to the exact POI item supplied by FlyAI."""
+async def travel_attraction_editorial() -> dict:
+    """Return FlyAI editorial items through the persistent cache when available."""
+    params = {"city": "北京", "poiLevel": "5"}
+    cached = await read_cache("fliggy", "attraction_editorial", params)
+    if not isinstance(cached, CacheMiss) and cached.tier in (CacheTier.FRESH, CacheTier.STALE):
+        if isinstance(cached.payload, dict):
+            response = dict(cached.payload)
+            response.setdefault("cache", {"cacheStatus": cached.tier.value})
+            return response
     try:
-        return get_fliggy_editorial_attractions()
+        response = await asyncio.to_thread(get_fliggy_editorial_attractions)
+        now = datetime.now(timezone.utc)
+        await upsert_cache(
+            "fliggy",
+            "attraction_editorial",
+            params,
+            response,
+            fetched_at=now_iso(),
+            expires_at=(now + timedelta(hours=6)).isoformat(),
+            stale_until=(now + timedelta(days=2)).isoformat(),
+        )
+        response = dict(response)
+        response["cache"] = {"cacheStatus": "miss", "fetchedAt": now.isoformat()}
+        return response
     except FliggyAttractionError as exc:
         raise HTTPException(
             status_code=exc.status_code,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
+
+
+@app.get("/api/travel/explore")
+async def travel_explore(
+    category: Literal["attraction", "restaurant", "hotel"],
+    city: str = Query(default="北京", max_length=32),
+    keyword: str = Query(default="", max_length=60),
+    page: int = Query(default=1, ge=1, le=100),
+    page_size: int = Query(default=20, alias="pageSize", ge=1, le=25),
+) -> dict:
+    """
+    Unified explore listing backed by the PostgreSQL cache layer.
+
+    - attraction / restaurant: Amap entities (Fresh 7d/24h, Stale 30d/7d, Miss->Amap)
+    - hotel: delegated to the FlyAI pipeline (never cached as Amap places)
+    - city is a parameter; the first city is Beijing but nothing is hardcoded.
+    """
+    if category == "hotel":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "USE_HOTEL_SEARCH", "message": "hotel listings use /api/travel/hotels/search"},
+        )
+    try:
+        return await explore_places(category, city, keyword, page, page_size)
+    except ProviderNotConfigured as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "PROVIDER_NOT_CONFIGURED", "message": str(exc)},
+        ) from exc
+    except ProviderRequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_CATEGORY", "message": str(exc)}) from exc
+
+
+@app.get("/api/travel/places/detail")
+async def travel_place_detail(
+    source: str = Query(default="amap", max_length=16),
+    source_id: str = Query(alias="sourceId", max_length=64),
+    category: Literal["attraction", "restaurant"] = Query(default="attraction"),
+) -> dict:
+    """
+    Place detail by (source, sourceId).
+
+    Returns the DB snapshot immediately (fresh, stale, or expired). Stale and
+    expired snapshots enqueue a deduplicated refresh job so the response never
+    blocks on Amap; a cold miss performs one bounded provider lookup.
+    404 when neither DB nor provider knows the place.
+    """
+    detail = await get_place_detail(source, source_id, category)
+    if detail is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "PLACE_NOT_FOUND", "message": "no cached place with this source + sourceId"},
+        )
+    return detail
 
 
 COORDINATE_PATTERN = re.compile(r"^-?(?:180(?:\.0+)?|1[0-7]\d(?:\.\d+)?|\d?\d(?:\.\d+)?),-?(?:90(?:\.0+)?|[0-8]?\d(?:\.\d+)?)$")
@@ -447,12 +585,36 @@ def _validate_coordinate(value: str) -> str:
 
 
 @app.get("/api/travel/routes")
-def travel_routes(
+async def travel_routes(
     origin: str = Query(max_length=48),
     destination: str = Query(max_length=48),
+    mode: Literal["transit", "driving", "walking"] | None = Query(default=None),
 ) -> dict:
+    origin_value = _validate_coordinate(origin)
+    destination_value = _validate_coordinate(destination)
+    cache_params = {"origin": origin_value, "destination": destination_value, "mode": mode or "all"}
+    # Route snapshots are safe to reuse briefly and remove the cold-start
+    # amplification where every itinerary pair fans out into three providers.
+    cached = await read_cache("amap", "route", cache_params)
+    if not isinstance(cached, CacheMiss) and cached.tier in (CacheTier.FRESH, CacheTier.STALE) and isinstance(cached.payload, dict):
+        response = dict(cached.payload)
+        response["cache"] = {"cacheStatus": cached.tier.value}
+        if cached.tier is CacheTier.STALE:
+            await ensure_refresh_job("route", "amap", "route", cache_params, payload=cache_params)
+        return response
     try:
-        return get_routes(_validate_coordinate(origin), _validate_coordinate(destination))
+        result = await asyncio.to_thread(get_routes, origin_value, destination_value, mode)
+        now = datetime.now(timezone.utc)
+        await upsert_cache(
+            "amap",
+            "route",
+            cache_params,
+            result,
+            fetched_at=now_iso(),
+            expires_at=(now + timedelta(minutes=10)).isoformat(),
+            stale_until=(now + timedelta(hours=2)).isoformat(),
+        )
+        return {**result, "cache": {"cacheStatus": "miss", "fetchedAt": now.isoformat()}}
     except ProviderNotConfigured as exc:
         raise HTTPException(
             status_code=503,
@@ -461,7 +623,7 @@ def travel_routes(
     except ProviderRequestError as exc:
         raise HTTPException(
             status_code=502,
-            detail={"code": "PROVIDER_REQUEST_FAILED", "message": str(exc)},
+            detail={"code": exc.code, "message": str(exc)},
         ) from exc
 
 
@@ -499,7 +661,7 @@ def travel_hotel_geocode(payload: HotelGeoRequest) -> HotelGeoResponse:
     except ProviderRequestError as exc:
         raise HTTPException(
             status_code=502,
-            detail={"code": "PROVIDER_REQUEST_FAILED", "message": str(exc)},
+            detail={"code": exc.code, "message": str(exc)},
         ) from exc
 
 

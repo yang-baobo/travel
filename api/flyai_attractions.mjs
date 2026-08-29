@@ -4,6 +4,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import {
+  CacheMiss,
+  readCache,
+  upsertCache,
+} from './db/node_repository.mjs';
+
 const execFileAsync = promisify(execFile);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const cliPath = resolve(projectRoot, 'node_modules/@fly-ai/flyai-cli/dist/flyai-bundle.cjs');
@@ -85,6 +91,24 @@ export default async function handler(request, response) {
   }
 
   const now = Date.now();
+  const cacheParams = { city: '北京', poiLevel: '5' };
+  const cached = await readCache('fliggy', 'attraction_editorial', cacheParams);
+  if (!(cached instanceof CacheMiss) && (cached.tier === 'fresh' || cached.tier === 'stale') && cached.payload) {
+    const cachedPayload = {
+      ...cached.payload,
+      cache: {
+        cacheStatus: cached.tier,
+        fetchedAt: cached.fetched_at,
+        expiresAt: cached.expires_at,
+        staleUntil: cached.stale_until,
+      },
+    };
+    if (cached.tier === 'fresh') {
+      memoryCache = { payload: cachedPayload, expiresAt: now + CACHE_TTL_MS };
+    }
+    response.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=86400');
+    return response.status(200).json(cachedPayload);
+  }
   if (memoryCache && memoryCache.expiresAt > now) {
     response.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=86400');
     return response.status(200).json(memoryCache.payload);
@@ -139,6 +163,14 @@ export default async function handler(request, response) {
       generatedAt: new Date(now).toISOString(),
     },
   };
+  const fetchedAt = new Date(now);
+  const expiresAt = new Date(now + CACHE_TTL_MS);
+  const staleUntil = new Date(now + 2 * 24 * 60 * 60 * 1000);
+  await upsertCache('fliggy', 'attraction_editorial', cacheParams, responsePayload, {
+    fetchedAt,
+    expiresAt,
+    staleUntil,
+  });
   memoryCache = { payload: responsePayload, expiresAt: now + CACHE_TTL_MS };
   response.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=86400');
   return response.status(200).json(responsePayload);

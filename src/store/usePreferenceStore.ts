@@ -15,7 +15,10 @@ function getLocalDateAfter(days: number): string {
 
 // 新行程默认使用未来日期，避免真实酒店供应商拒绝已经过期的固定演示日期。
 const getDefaultStartDate = () => getLocalDateAfter(1);
-const getDefaultReturnDate = () => getLocalDateAfter(3);
+// A three-day trip spans the start date plus two nights. Keeping this aligned
+// with PlanningRequest.days prevents a newly created session from being
+// rejected by the strict date validator.
+const getDefaultReturnDate = () => getLocalDateAfter(2);
 
 const DEFAULT_TRANSPORT_RULE: TransportRule = {
   walkMaxKm: 1,

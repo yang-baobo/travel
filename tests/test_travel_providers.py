@@ -67,6 +67,21 @@ class TravelProviderTest(unittest.TestCase):
         self.assertEqual(providers._duration_minutes("29"), 1)
         self.assertEqual(providers._duration_minutes("0"), 0)
 
+    def test_route_mode_limits_upstream_fanout(self) -> None:
+        calls: list[str] = []
+
+        def fake_request(path: str, params: dict) -> dict:
+            calls.append(path)
+            return {"route": {"paths": [{"duration": "600", "distance": "5000"}]}}
+
+        with patch.object(providers, "_amap_request", side_effect=fake_request):
+            result = providers.get_routes("116.397000,39.908000", "116.407000,39.918000", mode="driving")
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0], "/v5/direction/driving")
+        self.assertIsNotNone(result["driving"])
+        self.assertIsNone(result["transit"])
+
     def test_exact_place_name_is_promoted_ahead_of_unrelated_provider_ranking(self) -> None:
         def poi(place_id: str, name: str) -> dict:
             return {
