@@ -153,6 +153,7 @@ export default function HomeScreen() {
   const [ignoredIds, setIgnoredIds] = useState<string[]>([]);
   const [autoPlanIds, setAutoPlanIds] = useState<string[]>([]);
   const [inputMethod, setInputMethod] = useState<PlanningInputMethod>('text');
+  const [planningValidationMessage, setPlanningValidationMessage] = useState('');
 
   const scrollY = useRef(new Animated.Value(0)).current;
   const heroOpacity = useRef(new Animated.Value(1)).current;
@@ -375,9 +376,12 @@ export default function HomeScreen() {
     if (!params.pace) missing.push('节奏');
     if (mode !== 'auto' && activeCandidates.length === 0) missing.push('景点');
     if (missing.length > 0) {
-      Alert.alert('请补全信息', `尚未选择：${missing.join('、')}。请先完成设置再进入 AI 规划。`);
+      const message = `尚未选择：${missing.join('、')}。请先完成设置再进入 AI 规划。`;
+      setPlanningValidationMessage(message);
+      Alert.alert('请补全信息', message);
       return;
     }
+    setPlanningValidationMessage('');
     const entryMode: PlanningEntryMode = plannerExpanded && mode !== 'auto' ? 'selected_places' : 'chat';
     enterPlanning(entryMode, inputMethod);
   };
@@ -609,7 +613,11 @@ export default function HomeScreen() {
                     </View>
                   </PressScale>
                 ) : null}
-                <PressScale onPress={startPlanning} disabled={!canEnterPlanning || planning} style={styles.primaryAction}>
+                <PressScale
+                  onPress={startPlanning}
+                  disabled={planning}
+                  style={styles.primaryAction}
+                >
                   <LinearGradient colors={canEnterPlanning ? ['#17BCAA', '#08766D'] : ['#B0C4C0', '#93A9A4']} style={styles.primaryActionInner}>
                     {planning ? <ActivityIndicator color="#FFF" /> : <Ionicons name="sparkles" size={17} color="#FFF" />}
                     <Text style={styles.primaryActionText}>{planning ? 'AI 正在规划…' : '下一步'}</Text>
@@ -617,6 +625,11 @@ export default function HomeScreen() {
                   </LinearGradient>
                 </PressScale>
               </View>
+              {planningValidationMessage ? (
+                <Text accessibilityRole="alert" style={styles.planningValidationText}>
+                  {planningValidationMessage}
+                </Text>
+              ) : null}
             </Animated.View>
           ) : null}
 
@@ -723,6 +736,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.bg },
   content: { paddingBottom: 0 },
   hero: { position: 'relative', overflow: 'hidden', backgroundColor: '#293230' },
+  planningValidationText: { marginTop: 10, color: '#B42318', fontSize: 14, fontWeight: '700' },
   heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', resizeMode: 'cover' },
   heroOrbOne: { position: 'absolute', width: 420, height: 420, borderRadius: 210, right: -210, top: 130, backgroundColor: 'rgba(20,190,170,0.10)' },
   heroOrbTwo: { position: 'absolute', width: 260, height: 260, borderRadius: 130, left: -150, bottom: 40, backgroundColor: 'rgba(242,193,91,0.08)' },
