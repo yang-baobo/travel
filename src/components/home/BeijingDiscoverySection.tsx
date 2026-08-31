@@ -155,7 +155,7 @@ function DiscoveryState({ message, actionLabel, onAction }: { message: string; a
       <Ionicons name="images-outline" size={24} color="#0E9F93" />
       <Text style={styles.emptyText}>{message}</Text>
       {actionLabel && onAction ? (
-        <Pressable onPress={onAction} style={styles.retryButton}><Text style={styles.retryText}>{actionLabel}</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={actionLabel} onPress={onAction} style={styles.retryButton}><Text style={styles.retryText}>{actionLabel}</Text></Pressable>
       ) : null}
     </View>
   );
@@ -177,7 +177,7 @@ function DiscoveryCard({ card, index, scrollX, onPress }: {
     extrapolate: 'clamp',
   });
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.discoveryCard, pressed && styles.pressed]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`查看景点：${card.name}`} onPress={onPress} style={({ pressed }) => [styles.discoveryCard, pressed && styles.pressed]}>
       <View style={styles.discoveryImageWrap}>
         <LinearGradient colors={['#0E9F93', '#084D48']} style={styles.discoveryImageFallback} />
         {card.imageUrl && !broken ? (

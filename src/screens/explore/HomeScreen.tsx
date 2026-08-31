@@ -67,17 +67,27 @@ function formatDateDisplay(dateStr: string): string {
 
 const QUICK_PROMPTS = ['带父母慢慢逛', '建筑与咖啡', '周末两日松弛游'];
 
-function PressScale({ children, onPress, style, disabled = false }: {
+function PressScale({ children, onPress, style, disabled = false, accessibilityLabel }: {
   children: React.ReactNode;
   onPress: () => void;
   style?: object;
   disabled?: boolean;
+  accessibilityLabel: string;
 }) {
   const scale = useRef(new Animated.Value(1)).current;
   const pressIn = () => Animated.timing(scale, { toValue: 0.97, duration: 100, useNativeDriver: true }).start();
   const pressOut = () => Animated.spring(scale, { toValue: 1, speed: 28, bounciness: 6, useNativeDriver: true }).start();
   return (
-    <Pressable onPress={onPress} onPressIn={pressIn} onPressOut={pressOut} disabled={disabled} style={style}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ disabled }}
+      onPress={onPress}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
+      disabled={disabled}
+      style={style}
+    >
       <Animated.View style={{ transform: [{ scale }] }}>{children}</Animated.View>
     </Pressable>
   );
@@ -144,8 +154,6 @@ export default function HomeScreen() {
   const [featuredLoading, setFeaturedLoading] = useState(true);
   const [featuredError, setFeaturedError] = useState(false);
   const [editorialAttractions, setEditorialAttractions] = useState<FliggyAttractionEditorial[]>([]);
-  const [editorialLoading, setEditorialLoading] = useState(true);
-  const [editorialError, setEditorialError] = useState(false);
   const [heroIndex, setHeroIndex] = useState(0);
   const [preferenceCard, setPreferenceCard] = useState(false);
   const [sessionPreference, setSessionPreference] = useState('');
@@ -185,17 +193,12 @@ export default function HomeScreen() {
   useEffect(() => loadFeatured(), [loadFeatured]);
 
   const loadEditorialAttractions = useCallback(() => {
-    setEditorialLoading(true);
-    setEditorialError(false);
     fetchFliggyAttractionEditorial()
       .then(response => {
         setEditorialAttractions(response.attractions);
-        setEditorialLoading(false);
       })
       .catch(() => {
         setEditorialAttractions([]);
-        setEditorialError(true);
-        setEditorialLoading(false);
       });
   }, []);
 
@@ -438,17 +441,17 @@ export default function HomeScreen() {
               </View>
               {isDesktop ? (
                 <View style={styles.desktopNav}>
-                  <Pressable onPress={navigateToNearby}><Text style={styles.desktopNavText}>发现北京</Text></Pressable>
-                  <Pressable onPress={() => navigation.navigate('HotelList')}><Text style={styles.desktopNavText}>酒店</Text></Pressable>
-                  <Pressable onPress={() => navigation.navigate('LivePlaces', { category: 'restaurant' })}><Text style={styles.desktopNavText}>餐饮</Text></Pressable>
-                  <Pressable onPress={() => hasRoute ? navigation.navigate('LiveItinerary') : togglePlanner()}><Text style={styles.desktopNavText}>我的行程</Text></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel="发现北京" onPress={navigateToNearby}><Text style={styles.desktopNavText}>发现北京</Text></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel="查看酒店" onPress={() => navigation.navigate('HotelList')}><Text style={styles.desktopNavText}>酒店</Text></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel="查看餐饮" onPress={() => navigation.navigate('LivePlaces', { category: 'restaurant' })}><Text style={styles.desktopNavText}>餐饮</Text></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel="查看我的行程" onPress={() => hasRoute ? navigation.navigate('LiveItinerary') : togglePlanner()}><Text style={styles.desktopNavText}>我的行程</Text></Pressable>
                 </View>
               ) : null}
               <View style={styles.headerActions}>
-                <Pressable onPress={() => setElderlyMode(!elderlyMode)} style={[styles.roundHeaderButton, elderlyMode && styles.roundHeaderButtonOn]}>
+                <Pressable accessibilityRole="button" accessibilityLabel={elderlyMode ? '关闭长辈模式' : '开启长辈模式'} accessibilityState={{ checked: elderlyMode }} onPress={() => setElderlyMode(!elderlyMode)} style={[styles.roundHeaderButton, elderlyMode && styles.roundHeaderButtonOn]}>
                   <Ionicons name="accessibility-outline" size={18} color="#FFF" />
                 </Pressable>
-                <Pressable onPress={() => navigation.getParent()?.navigate('个人' as never)} style={styles.avatar}>
+                <Pressable accessibilityRole="button" accessibilityLabel="打开个人中心" onPress={() => navigation.getParent()?.navigate('个人' as never)} style={styles.avatar}>
                   <Ionicons name="person" size={16} color={C.tealDark} />
                 </Pressable>
               </View>
@@ -484,11 +487,11 @@ export default function HomeScreen() {
                 />
               </View>
               <View style={styles.composerActions}>
-                <Pressable onPress={() => void handleAsrPress()} style={styles.voiceOrb}>
+                <Pressable accessibilityRole="button" accessibilityLabel={plannerVoice.status === 'listening' ? '停止录音' : '语音输入'} onPress={() => void handleAsrPress()} style={styles.voiceOrb}>
                   <Animated.View pointerEvents="none" style={[styles.voicePulse, { opacity: pulseOpacity, transform: [{ scale: pulseScale }] }]} />
                   {plannerVoice.status === 'transcribing' ? <ActivityIndicator size="small" color="#FFF" /> : <Ionicons name={plannerVoice.status === 'listening' ? 'stop' : 'mic-outline'} size={20} color="#FFF" />}
                 </Pressable>
-                <PressScale onPress={togglePlanner} disabled={planning}>
+                <PressScale accessibilityLabel="开始规划" onPress={togglePlanner} disabled={planning}>
                   <LinearGradient colors={['#21C6B5', '#0A8B80']} style={styles.sendButton}>
                     <Ionicons name="sparkles" size={17} color="#FFF" style={{ marginRight: 6 }} />
                     <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '900' }}>开始规划</Text>
@@ -499,14 +502,14 @@ export default function HomeScreen() {
 
             <View style={styles.quickPromptRow}>
               {QUICK_PROMPTS.map(prompt => (
-                <Pressable key={prompt} onPress={() => chooseQuickPrompt(prompt)} style={styles.quickPrompt}>
+                <Pressable accessibilityRole="button" accessibilityLabel={`使用快捷需求：${prompt}`} key={prompt} onPress={() => chooseQuickPrompt(prompt)} style={styles.quickPrompt}>
                   <Text style={styles.quickPromptText}>{prompt}</Text>
                 </Pressable>
               ))}
             </View>
 
             <View style={[styles.heroBottomRow, isDesktop && styles.heroBottomRowDesktop]}>
-              <Pressable onPress={togglePlanner} style={styles.deepPlanLink}>
+              <Pressable accessibilityRole="button" accessibilityLabel={plannerExpanded ? '收起深度定制' : '展开深度定制'} onPress={togglePlanner} style={styles.deepPlanLink}>
                 <Text style={styles.deepPlanText}>{plannerExpanded ? '收起深度定制' : '展开深度定制'}</Text>
                 <Ionicons name={plannerExpanded ? 'chevron-up' : 'options-outline'} size={16} color="#FFF" />
               </Pressable>
@@ -533,7 +536,7 @@ export default function HomeScreen() {
                   <Text style={styles.studioTitle}>把灵感变成可走的路线</Text>
                   <Text style={styles.studioSubtitle}>设置边界，剩下的交给 AI 与真实城市数据。</Text>
                 </View>
-                <Pressable onPress={togglePlanner} style={styles.studioClose}>
+                <Pressable accessibilityRole="button" accessibilityLabel="关闭深度定制" onPress={togglePlanner} style={styles.studioClose}>
                   <Ionicons name="close" size={20} color={C.ink} />
                 </Pressable>
               </View>
@@ -555,11 +558,11 @@ export default function HomeScreen() {
               />
 
               <View style={styles.studioToolbar}>
-                <Pressable onPress={() => void handleAsrPress()} style={styles.studioVoiceButton}>
+                <Pressable accessibilityRole="button" accessibilityLabel={plannerVoice.status === 'listening' ? '完成录音' : '语音转文字'} onPress={() => void handleAsrPress()} style={styles.studioVoiceButton}>
                   <Ionicons name={plannerVoice.status === 'listening' ? 'stop' : 'mic-outline'} size={17} color={C.tealDark} />
                   <Text style={styles.studioVoiceText}>{plannerVoice.status === 'transcribing' ? '正在转写…' : plannerVoice.status === 'listening' ? '完成录音' : '语音转文字'}</Text>
                 </Pressable>
-                <Pressable onPress={openRealtimePlanning} style={styles.studioVoiceButton}>
+                <Pressable accessibilityRole="button" accessibilityLabel="开始实时通话" onPress={openRealtimePlanning} style={styles.studioVoiceButton}>
                   <Ionicons name="call-outline" size={17} color={C.tealDark} />
                   <Text style={styles.studioVoiceText}>实时通话</Text>
                 </Pressable>
@@ -571,7 +574,7 @@ export default function HomeScreen() {
                   const copy = PLANNER_MODE_COPY[m];
                   const active = mode === m;
                   return (
-                    <Pressable key={m} onPress={() => setMode(m)} style={[styles.modeBtn, active && styles.modeBtnActive]}>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`选择规划方式：${copy.label}`} accessibilityState={{ selected: active }} key={m} onPress={() => setMode(m)} style={[styles.modeBtn, active && styles.modeBtnActive]}>
                       <Text style={[styles.modeBtnText, active && styles.modeBtnTextActive]}>{copy.label}</Text>
                     </Pressable>
                   );
@@ -579,12 +582,12 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.params}>
-                <Pressable onPress={() => setPicker('days')} style={[styles.param, elderlyMode && styles.largeTouch]}>
+                <Pressable accessibilityRole="button" accessibilityLabel="选择旅行日期" onPress={() => setPicker('days')} style={[styles.param, elderlyMode && styles.largeTouch]}>
                   <Text style={styles.paramValue}>{params.startDate ? `${formatDateDisplay(params.startDate)} – ${formatDateDisplay(params.endDate)} · ${params.days}` : '选择日期'}</Text>
                   <Ionicons name="chevron-down" size={13} color={C.teal} />
                 </Pressable>
                 {(['people', 'budget', 'pace'] as ParameterField[]).map(field => (
-                  <Pressable key={field} onPress={() => setPicker(field)} style={[styles.param, elderlyMode && styles.largeTouch]}>
+                  <Pressable accessibilityRole="button" accessibilityLabel={FIELD_LABELS[field]} key={field} onPress={() => setPicker(field)} style={[styles.param, elderlyMode && styles.largeTouch]}>
                     <Text style={styles.paramValue}>{params[field] || FIELD_LABELS[field]}</Text>
                     <Ionicons name="chevron-down" size={13} color={C.teal} />
                   </Pressable>
@@ -606,7 +609,7 @@ export default function HomeScreen() {
 
               <View style={[styles.studioActions, !isDesktop && styles.studioActionsMobile]}>
                 {activeCandidates.length > 0 ? (
-                  <PressScale onPress={() => setPreviewVisible(true)} style={styles.previewAction}>
+                  <PressScale accessibilityLabel={`预览 ${activeCandidates.length} 个候选景点`} onPress={() => setPreviewVisible(true)} style={styles.previewAction}>
                     <View style={styles.previewActionInner}>
                       <Ionicons name="map-outline" size={17} color={C.tealDark} />
                       <Text style={styles.previewActionText}>预览 {activeCandidates.length} 个候选</Text>
@@ -614,6 +617,7 @@ export default function HomeScreen() {
                   </PressScale>
                 ) : null}
                 <PressScale
+                  accessibilityLabel="下一步，开始生成规划"
                   onPress={startPlanning}
                   disabled={planning}
                   style={styles.primaryAction}
@@ -643,8 +647,8 @@ export default function HomeScreen() {
                   <Text style={styles.nudgeText}>过敏、步行量、预算和绝对不要，只设置一次。</Text>
                 </View>
                 <View style={styles.nudgeActions}>
-                  <Pressable onPress={() => navigation.navigate('Preference')} style={styles.nudgePrimary}><Text style={styles.nudgePrimaryText}>去设置</Text></Pressable>
-                  <Pressable onPress={dismissPreferencePrompt} style={styles.nudgeLater}><Text style={styles.nudgeLaterText}>稍后</Text></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel="设置旅行偏好" onPress={() => navigation.navigate('Preference')} style={styles.nudgePrimary}><Text style={styles.nudgePrimaryText}>去设置</Text></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel="稍后设置旅行偏好" onPress={dismissPreferencePrompt} style={styles.nudgeLater}><Text style={styles.nudgeLaterText}>稍后</Text></Pressable>
                 </View>
               </LinearGradient>
             </View>
@@ -658,9 +662,9 @@ export default function HomeScreen() {
           <BeijingDiscoverySection
             places={featured}
             editorialPlaces={editorialAttractions}
-            loading={featuredLoading || editorialLoading}
-            error={featuredError || editorialError}
-            onRetry={() => { loadFeatured(); loadEditorialAttractions(); }}
+            loading={featuredLoading}
+            error={featuredError}
+            onRetry={loadFeatured}
             elderlyMode={elderlyMode}
             scrollY={scrollY}
             onExplore={place => navigation.navigate('LivePlaceDetail', { placeId: place.id })}
@@ -672,6 +676,7 @@ export default function HomeScreen() {
             <View style={styles.serviceGrid}>
               {QUICK_SERVICES.map((service, index) => (
                 <PressScale
+                  accessibilityLabel={`打开${service.title}`}
                   key={service.id}
                   onPress={() => service.id === 'hotel'
                     ? navigation.navigate('HotelList')
@@ -705,7 +710,7 @@ export default function HomeScreen() {
               <Text style={styles.elderlyTitle}>和父母旅行，也可以很轻松</Text>
               <Text style={styles.elderlyText}>开启后，AI 会减少步行、增加休息，并避开不适合的安排。</Text>
             </View>
-            <Pressable onPress={() => setElderlyMode(!elderlyMode)} style={[styles.switch, elderlyMode && styles.switchOn]}>
+            <Pressable accessibilityRole="button" accessibilityLabel={elderlyMode ? '关闭长辈模式' : '开启长辈模式'} accessibilityState={{ checked: elderlyMode }} onPress={() => setElderlyMode(!elderlyMode)} style={[styles.switch, elderlyMode && styles.switchOn]}>
               <View style={[styles.switchThumb, elderlyMode && styles.switchThumbOn]} />
             </Pressable>
           </View>
