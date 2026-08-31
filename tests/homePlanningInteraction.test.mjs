@@ -21,7 +21,9 @@ test('home creates a structured session and navigates to the dedicated planning 
 test('text, ASR and realtime are three inputs into the same Planning Session', () => {
   assert.match(home, /plannerVoice\.setOnFinalText/);
   assert.match(home, /setInput\(current =>/);
-  for (const label of ['选景点规划', 'AI 对话定制', '电话实时规划']) assert.ok(home.includes(label));
+  assert.match(home, /beginSession\(createRequest\(method\)/);
+  assert.match(home, /enterPlanning\('realtime', 'realtime', true\)/);
+  assert.match(home, /PlanningEntryMode/);
   assert.match(planningScreen, /answerPlanningCollection\(spoken, 'realtime', false\)/);
   assert.match(realtime, /planning_session:/);
   assert.match(realtime, /inputMethod: 'realtime'/);
