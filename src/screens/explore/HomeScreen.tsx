@@ -401,6 +401,15 @@ export default function HomeScreen() {
   const chooseQuickPrompt = (prompt: string) => {
     setInput(prompt);
     setSessionPreference(prompt);
+    setInputMethod('text');
+  };
+
+  const handleHeroPlanning = () => {
+    if (input.trim()) {
+      enterPlanning('chat', inputMethod);
+      return;
+    }
+    togglePlanner();
   };
 
   const navigateToNearby = () => navigation.navigate('LivePlaces', { category: 'attraction' });
@@ -491,7 +500,7 @@ export default function HomeScreen() {
                   <Animated.View pointerEvents="none" style={[styles.voicePulse, { opacity: pulseOpacity, transform: [{ scale: pulseScale }] }]} />
                   {plannerVoice.status === 'transcribing' ? <ActivityIndicator size="small" color="#FFF" /> : <Ionicons name={plannerVoice.status === 'listening' ? 'stop' : 'mic-outline'} size={20} color="#FFF" />}
                 </Pressable>
-                <PressScale accessibilityLabel="开始规划" onPress={togglePlanner} disabled={planning}>
+                <PressScale accessibilityLabel="开始规划" onPress={handleHeroPlanning} disabled={planning}>
                   <LinearGradient colors={['#21C6B5', '#0A8B80']} style={styles.sendButton}>
                     <Ionicons name="sparkles" size={17} color="#FFF" style={{ marginRight: 6 }} />
                     <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '900' }}>开始规划</Text>
