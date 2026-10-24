@@ -9,6 +9,7 @@ import type {
   DerivedTravelConstraint,
 } from '../types/planning';
 import { categories } from '../data/categories';
+import { addPlanningDays } from './planningDateValidation';
 
 const MAX_LIST = 30;
 const MAX_TEXT = 80;
@@ -213,6 +214,8 @@ export function buildLocalPlanningPatch(text: string, request: PlanningRequest, 
   if (/不要住酒店|不住酒店|无需酒店|当天往返/.test(answer)) set.needHotel = false; else if (/需要酒店|住酒店|安排住宿/.test(answer)) set.needHotel = true;
   if (/不要午餐|不安排午餐|不吃午餐/.test(answer)) set.needLunch = false; else if (/午餐|中午吃/.test(answer)) set.needLunch = true;
   if (/不要晚餐|不安排晚餐|不吃晚餐/.test(answer)) set.needDinner = false; else if (/晚餐|晚上吃/.test(answer)) set.needDinner = true;
+  if (/安排两餐/.test(answer)) { set.needLunch = true; set.needDinner = true; }
+  if (/午餐晚餐自理|两餐自理|用餐自理/.test(answer)) { set.needLunch = false; set.needDinner = false; }
   if (/不安排夜间|不要夜间|晚上不出门|不玩夜景/.test(answer)) set.noNightActivity = true;
   const walking = answer.match(/(?:每天|每日)(?:最多|不超过|不要超过)\s*(\d+)\s*分钟/); if (walking) set.maxWalkingMinutesPerDay = Number(walking[1]);
   const segmentWalk = answer.match(/(?:单段|一段|每段)(?:最多|不超过|不要超过)\s*(\d+)\s*分钟/); if (segmentWalk) set.maxWalkingMinutesPerSegment = Number(segmentWalk[1]);
@@ -330,6 +333,6 @@ export function applyPlanningPatch(request: PlanningRequest, patch: PlanningPatc
   const nextRevision = next.revision || 0;
   const record: PlanningPatchRecord = { patch: { ...patch, appliedAt: now, sessionRevision: nextRevision }, sourceText: sourceText.slice(0, 8000), appliedAt: now, revision: nextRevision };
   next.patchHistory = [...(request.patchHistory || []), record].slice(-50);
-  next.preferenceSnapshot.travelReturnDate = (() => { const d = new Date(`${next.preferenceSnapshot.travelStartDate}T12:00:00`); d.setDate(d.getDate() + Math.max(1, next.days - 1)); return d.toISOString().slice(0, 10); })();
+  next.preferenceSnapshot.travelReturnDate = addPlanningDays(next.preferenceSnapshot.travelStartDate, next.days);
   return next;
 }

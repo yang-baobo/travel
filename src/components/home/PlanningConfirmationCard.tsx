@@ -67,7 +67,9 @@ export default function PlanningConfirmationCard({ session, busy, onConfirm }: {
         <View style={styles.headerCopy}>
           <Text style={styles.eyebrow}>FINAL CHECK</Text>
           <Text style={styles.title}>请确认这份路线需求</Text>
-          <Text style={styles.subtitle}>确认后才会查询真实景点、酒店、餐厅和交通，并在新的完整页面展开路线。</Text>
+          <Text style={styles.subtitle}>{request.inputSource === 'form'
+            ? '按你逐项选择的条件，查询真实地点、餐饮和交通并计算完整行程；不需要再用大模型解释选项。'
+            : '确认后才会查询真实景点、酒店、餐厅和交通，并在新的完整页面展开路线。'}</Text>
         </View>
       </LinearGradient>
 

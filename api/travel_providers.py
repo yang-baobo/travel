@@ -45,6 +45,20 @@ AMAP_BLIND_BOX_TYPES: dict[BlindBoxContentCategory, str] = {
 _REQUEST_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _REQUEST_CACHE_LOCK = RLock()
 _REQUEST_CACHE_TTL_SECONDS = 5 * 60
+_REQUEST_GATE_LOCK = RLock()
+_LAST_REQUEST_AT: dict[str, float] = {}
+_DIRECTION_REQUEST_INTERVAL = 1.05
+
+
+def _pace_direction_request(path: str) -> None:
+    """Bound route fan-out per endpoint for this API worker, including retries."""
+    if "/direction/" not in path:
+        return
+    with _REQUEST_GATE_LOCK:
+        remaining = _DIRECTION_REQUEST_INTERVAL - (time.monotonic() - _LAST_REQUEST_AT.get(path, float("-inf")))
+        if remaining > 0:
+            time.sleep(remaining)
+        _LAST_REQUEST_AT[path] = time.monotonic()
 
 PARTNER_TEMPLATE_ENV: dict[PlaceCategory, str] = {
     "attraction": "CTRIP_TICKET_LINK_TEMPLATE",
@@ -114,6 +128,12 @@ def _amap_request(path: str, params: dict[str, Any]) -> dict[str, Any]:
             return cached[1]
 
     query = {**params, "key": _amap_key(), "output": "json"}
+    _pace_direction_request(path)
+    # Another identical request may have populated the cache while we queued.
+    with _REQUEST_CACHE_LOCK:
+        cached = _REQUEST_CACHE.get(cache_key)
+        if cached and cached[0] > time.monotonic():
+            return cached[1]
     url = f"{AMAP_BASE_URL}{path}?{urlencode(query)}"
     request = Request(
         url,

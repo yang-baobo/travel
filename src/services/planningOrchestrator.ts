@@ -358,7 +358,21 @@ export function createPlanningOrchestrator(
 
       let intent: PlanIntent;
       try {
-        intent = await deps.getIntent(input.request, input.messages);
+        intent = input.request.inputSource === 'form'
+          ? {
+              needsClarification: false,
+              clarificationQuestions: [],
+              normalizedRequest: {
+                userInput: input.request.userInput || '按已确认的旅行选项规划', city: input.request.city,
+                days: input.request.days, people: input.request.people,
+                totalBudget: input.request.totalBudget, pace: input.request.pace, mode: input.request.mode,
+              },
+              requestPatch: {},
+              explanation: '已采用你逐项确认的日期、景点和偏好；地点与交通来自高德，行程由路线优化器计算。',
+              provider: 'confirmed_fields',
+              model: null,
+            }
+          : await deps.getIntent(input.request, input.messages);
       } catch (error) {
         intent = buildLocalPlanIntent(input.request, error instanceof Error ? error.message : '远端响应失败');
       }
@@ -498,6 +512,11 @@ export function createPlanningOrchestrator(
         return (b.rating || 0) - (a.rating || 0);
       });
       const usable: Array<{ place: TravelPlace; windows: [number, number][]; priority: number; required: boolean; lockedDay: number | null }> = [];
+      const mealSlots: Array<{ day: number; label: string; bounds: [number, number]; assigned: boolean }> = [];
+      for (let day = 1; day <= request.days; day++) {
+        if (request.preferenceSnapshot.needLunch) mealSlots.push({ day, label: '午餐', bounds: [690, clockToMinutes(request.preferenceSnapshot.lunchLatestEndTime, 840)], assigned: false });
+        if (request.preferenceSnapshot.needDinner) mealSlots.push({ day, label: '晚餐', bounds: [1020, clockToMinutes(request.preferenceSnapshot.dinnerLatestEndTime, 1200)], assigned: false });
+      }
       let knownCostTotal = hotel?.referencePrice
         ? hotel.referencePrice * Math.max(1, request.days - 1)
         : 0;
@@ -538,15 +557,16 @@ export function createPlanningOrchestrator(
           unassignedPlaces.push({ sourceId: place.id, name: place.name, category: place.category, reasonCode: 'hours_unverified', reason: '高德未返回可解析的营业时间，不能放入正式时间轴。' });
           continue;
         }
-        if (place.category === 'restaurant') {
-          const mealBounds: [number, number][] = [];
-          if (request.preferenceSnapshot.needLunch) mealBounds.push([690, clockToMinutes(request.preferenceSnapshot.lunchLatestEndTime, 840)]);
-          if (request.preferenceSnapshot.needDinner) mealBounds.push([1020, clockToMinutes(request.preferenceSnapshot.dinnerLatestEndTime, 1200)]);
-          windows = mealBounds.length > 0 ? intersectWindows(windows, mealBounds) : windows;
-          if (windows.length === 0) {
+        let assignedMeal: typeof mealSlots[number] | undefined;
+        if (place.category === 'restaurant' && shouldArrangeMeals) {
+          assignedMeal = mealSlots.find(slot => !slot.assigned
+            && !isAttractionClosedOnDate(place.openHours, addDays(request.preferenceSnapshot.travelStartDate, slot.day - 1))
+            && intersectWindows(windows!, [slot.bounds]).some(([start, end]) => end - start >= durationFor(place, request)));
+          if (!assignedMeal) {
             unassignedPlaces.push({ sourceId: place.id, name: place.name, category: place.category, reasonCode: 'hours_unverified', reason: '餐厅营业时间与用餐限制没有可用交集。' });
             continue;
           }
+          windows = intersectWindows(windows, [assignedMeal.bounds]);
         }
         const placeCost = place.cost === null ? null : Math.max(0, place.cost * request.people);
         if (placeCost === null) unknownCosts = true;
@@ -566,8 +586,12 @@ export function createPlanningOrchestrator(
         const mention = (request.unresolvedPlaceMentions || []).find(item => normalizePlaceName(item.name) === normalizePlaceName(place.name));
         const accessibilityPenalty = mobilityActive && accessibility.status === 'unknown' ? 12 : 0;
         const accessibilityBonus = mobilityActive && accessibility.status === 'verified' ? 8 : 0;
-        usable.push({ place, windows, priority: Math.max(1, (isRequired ? 100 : preferredIds.has(place.id) ? 85 : Math.round((place.rating || 3) * 15)) - accessibilityPenalty + accessibilityBonus), required: isRequired, lockedDay: mention?.lockedDay ?? null });
+        if (assignedMeal) assignedMeal.assigned = true;
+        usable.push({ place, windows, priority: Math.max(1, (isRequired ? 100 : preferredIds.has(place.id) ? 85 : Math.round((place.rating || 3) * 15)) - accessibilityPenalty + accessibilityBonus), required: isRequired, lockedDay: assignedMeal?.day ?? mention?.lockedDay ?? null });
       }
+
+      const missingMeals = mealSlots.filter(slot => !slot.assigned);
+      if (missingMeals.length) blockingIssues.push(`未找到符合营业时间与预算的${missingMeals.map(slot => `第${slot.day}天${slot.label}`).join('、')}餐厅；请更换偏好或选择用餐自理。`);
 
       if (request.hardConstraints.dietaryAllergies.length > 0) {
         uncertainties.push('餐厅公开字段无法证明完全不含过敏原，确认前仍需向商家复核。');
@@ -676,6 +700,12 @@ export function createPlanningOrchestrator(
       const placeMap = new Map(routableUsable.map(item => [item.place.id, item.place]));
       const days = optimization ? planDays({ request, optimization, places: placeMap, segments, hotel }) : [];
       if (optimization) {
+        if (optimization.status === 'infeasible') blockingIssues.push('当前景点、用餐时段与交通无法在每日时间内全部安排，请减少地点或放宽结束时间。');
+        const scheduledIds = new Set(days.flatMap(day => day.stops.map(stop => stop.place.id)));
+        if (request.mode === 'self' || request.mode === 'complete') {
+          const missingSelected = selected.filter(place => !scheduledIds.has(place.id));
+          if (missingSelected.length) blockingIssues.push(`以下已选地点未能排入行程：${missingSelected.map(place => place.name).join('、')}。请检查营业时间或调整选择。`);
+        }
         optimization.unassigned_attraction_ids.forEach(id => {
           const place = placeMap.get(id);
           if (place) unassignedPlaces.push({ sourceId: id, name: place.name, category: place.category, reasonCode: 'optimizer_unassigned', reason: '路线优化器在营业时间、每日时段与交通约束下无法安排。' });

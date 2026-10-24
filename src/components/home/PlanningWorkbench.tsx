@@ -18,6 +18,7 @@ const STATUS_COPY: Record<PlanningSessionStatus, string> = {
 };
 
 const PROVIDER_COPY = {
+  confirmed_fields: '按已确认选项规划',
   remote_glm: 'GLM 远端理解',
   local_fallback: '本地规则降级',
   unavailable: 'AI 不可用',

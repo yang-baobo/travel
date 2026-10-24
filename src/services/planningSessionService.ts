@@ -50,6 +50,7 @@ export function answerPlanningCollection(
   text: string,
   inputMethod: PlanningInputMethod = 'text',
   recordMessage = true,
+  fromOption = false,
 ): void {
   const store = usePlanningSessionStore.getState();
   const session = store.session;
@@ -60,6 +61,7 @@ export function answerPlanningCollection(
   // surface. Use the same strict patch path instead of merely appending free
   // text, so a later “改成 6000 元 / 加上故宫 / 不坐飞机” updates the request.
   const applied = applyPlanningAnswer(session.request, active?.key || 'attractions', text, inputMethod);
+  if (fromOption) applied.request.inputSource = session.request.inputSource;
   store.updateRequest(applied.request);
   applied.confirmedKeys.forEach(key => {
     store.updateRequirement(key, requirementSummary(key, applied.request), inputMethod);
@@ -72,7 +74,7 @@ export function answerPlanningCollection(
       ? `已更新路线条件：${applied.confirmedKeys.map(key => requirementSummary(key, applied.request)).join('；')}。`
       : '这条补充已经写入规划请求。你可以继续修改，或生成真实路线。' });
     store.setStatus('collecting');
-    void refinePlanningAnswerWithGlm(text.trim(), inputMethod);
+    if (!fromOption) void refinePlanningAnswerWithGlm(text.trim(), inputMethod);
     return;
   }
   if (next) {
@@ -88,7 +90,7 @@ export function answerPlanningCollection(
   // The local patch gives an immediate deterministic update; in the browser,
   // send the same utterance to GLM for richer multi-field understanding. A
   // stale GLM response is ignored when a newer revision already exists.
-  void refinePlanningAnswerWithGlm(text.trim(), inputMethod);
+  if (!fromOption) void refinePlanningAnswerWithGlm(text.trim(), inputMethod);
 }
 
 function remotePlanningEnabled(): boolean {
@@ -103,7 +105,7 @@ async function refinePlanningAnswerWithGlm(text: string, inputMethod: PlanningIn
   try {
     const intent = await requestPlanningIntent(before.request, before.messages);
     const live = usePlanningSessionStore.getState().session;
-    if (!live || live.id !== before.id || (live.request.revision || 0) !== revision) return;
+    if (!live || live.id !== before.id || live.status !== 'collecting' || (live.request.revision || 0) !== revision) return;
     const patch = intent.planningPatch ? validatePlanningPatch(intent.planningPatch, inputMethod) : null;
     if (!patch) return;
     const next = applyPlanningPatch(live.request, { ...patch, source: inputMethod, sessionRevision: revision }, text);

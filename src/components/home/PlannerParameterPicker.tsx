@@ -8,12 +8,14 @@ type Key = keyof PlannerParams;
 const LABELS: Record<Key, string> = { days: '行程日期', startDate: '', endDate: '', people: '出行人数', budget: '预计预算', pace: '旅行节奏' };
 
 function formatDateLabel(dateStr: string): string {
+  if (!dateStr) return '未选择';
   const d = new Date(`${dateStr}T12:00:00`);
   const week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
   return `${d.getMonth() + 1}月${d.getDate()}日 周${week}`;
 }
 
 function daysBetween(a: string, b: string): number {
+  if (!a || !b) return 0;
   const da = new Date(`${a}T12:00:00`);
   const db = new Date(`${b}T12:00:00`);
   return Math.max(1, Math.round((db.getTime() - da.getTime()) / 86400000) + 1);
@@ -198,7 +200,7 @@ function DayRangePicker({
   const handlePick = (d: string) => {
     if (picking === 'start') {
       setTempStart(d);
-      if (d > tempEnd) setTempEnd(d);
+      setTempEnd(d);
       setPicking('end');
     } else {
       if (d < tempStart) {
@@ -286,8 +288,8 @@ function DayRangePicker({
         })}
       </View>
 
-      <Pressable style={styles.confirmBtn} onPress={() => onConfirm(tempStart, tempEnd)}>
-        <Text style={styles.confirmBtnText}>确认 · 共{totalDays}天</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="确认旅行日期" disabled={!tempStart || !tempEnd || totalDays > 15} style={[styles.confirmBtn, (!tempStart || !tempEnd || totalDays > 15) && { opacity: 0.45 }]} onPress={() => onConfirm(tempStart, tempEnd)}>
+        <Text style={styles.confirmBtnText}>{totalDays > 15 ? '最多选择15天' : totalDays ? `确认 · 共${totalDays}天` : '请先选择日期'}</Text>
       </Pressable>
     </View>
   );

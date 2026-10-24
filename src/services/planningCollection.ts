@@ -139,7 +139,7 @@ export function applyPlanningAnswer(
   // such as “6000吧” and preserves place/constraint intent for later resolve.
   const parsedPatch = buildLocalPlanningPatch(text, request, inputMethod, activeKey);
   const patchedRequest = applyPlanningPatch(
-    { ...request, userInput: [request.userInput.trim(), `补充：${text.trim()}`].filter(Boolean).join('\n') },
+    { ...request, inputSource: 'conversation', userInput: [request.userInput.trim(), `补充：${text.trim()}`].filter(Boolean).join('\n') },
     parsedPatch,
     text,
   );
@@ -239,7 +239,7 @@ export function quickAnswersFor(key: PlanningRequirementKey, request: PlanningRe
     case 'pace': return ['轻松游', '标准游', '紧凑多看'];
     case 'preferences': return ['历史建筑和北京美食', '自然公园和咖啡', '亲子体验'];
     case 'transport': return ['公交地铁为主', '打车为主', 'AI混合安排'];
-    case 'stay_meals': return ['需要酒店，安排午餐晚餐', '不住酒店，安排两餐', '按当前设置'];
+    case 'stay_meals': return ['需要酒店，安排午餐晚餐', '不住酒店，安排两餐', '不住酒店，午餐晚餐自理', '按当前设置'];
     case 'constraints': return ['没有特殊限制', '带长辈，少走路', '不安排夜间活动'];
     default: return [];
   }

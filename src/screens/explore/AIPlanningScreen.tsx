@@ -102,7 +102,7 @@ export default function AIPlanningScreen() {
     );
   }
 
-  const submit = async (answer = input) => {
+  const submit = async (answer = input, fromOption = false) => {
     const value = answer.trim();
     if (!value || busy || submitting) return;
     setSubmitting(true);
@@ -110,9 +110,9 @@ export default function AIPlanningScreen() {
       if (session.draft || session.status === 'needs_clarification') {
         await answerPlanningClarification(value);
       } else if (activeRequirement) {
-        answerPlanningCollection(value, 'text');
+        answerPlanningCollection(value, 'text', true, fromOption);
       } else {
-        answerPlanningCollection(value, 'text');
+        answerPlanningCollection(value, 'text', true, fromOption);
       }
       setInput('');
     } finally {
@@ -274,7 +274,7 @@ export default function AIPlanningScreen() {
                     <Text style={styles.currentQuestion}>{planningQuestion(activeRequirement.key, session.request)}</Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow}>
                       {quickAnswersFor(activeRequirement.key, session.request).map(answer => (
-                        <Pressable key={answer} onPress={() => void submit(answer)} style={styles.quickAnswer}><Text style={styles.quickAnswerText}>{answer}</Text></Pressable>
+                        <Pressable accessibilityRole="button" accessibilityLabel={answer} key={answer} onPress={() => void submit(answer, true)} style={styles.quickAnswer}><Text style={styles.quickAnswerText}>{answer}</Text></Pressable>
                       ))}
                     </ScrollView>
                   </>
@@ -327,7 +327,7 @@ export default function AIPlanningScreen() {
             ) : null}
 
             {busy ? (
-              <View style={styles.busyCard}><ActivityIndicator color="#0E9F93" /><View><Text style={styles.busyTitle}>正在生成真实路线</Text><Text style={styles.busyText}>当前步骤来自真实请求进度，不使用假倒计时。</Text></View></View>
+              <View style={styles.busyCard}><ActivityIndicator color="#0E9F93" /><View><Text style={styles.busyTitle}>正在生成真实路线</Text><Text style={styles.busyText}>{session.messages.filter(message => message.role === 'system').at(-1)?.text || '正在核对已确认条件'}</Text></View></View>
             ) : null}
 
             {['needs_clarification', 'error'].includes(session.status) ? (

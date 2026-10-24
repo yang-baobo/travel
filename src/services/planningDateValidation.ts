@@ -50,7 +50,7 @@ function parseISODate(value: string): Date | null {
 export function addPlanningDays(startDate: string, days: number): string {
   const date = parseISODate(startDate);
   if (!date) return startDate;
-  date.setUTCDate(date.getUTCDate() + Math.max(1, Math.floor(days) - 1));
+  date.setUTCDate(date.getUTCDate() + Math.max(0, Math.floor(days) - 1));
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 }
 
@@ -63,7 +63,7 @@ export function validateTravelDateRange(input: TravelDateRangeInput): TravelDate
   if (input.startDate < today) {
     return { valid: false, code: 'start_date_in_past', message: `出发日期 ${input.startDate} 已经过期，请重新选择日期。`, today };
   }
-  if (input.endDate <= input.startDate) {
+  if (input.endDate < input.startDate || (input.endDate === input.startDate && input.days !== 1)) {
     return { valid: false, code: 'end_date_not_after_start', message: '返程日期必须晚于出发日期。', today };
   }
   if (input.days !== undefined && input.days >= 1 && input.endDate !== addPlanningDays(input.startDate, input.days)) {

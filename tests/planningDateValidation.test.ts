@@ -17,3 +17,11 @@ test('date validation rejects impossible and inconsistent dates', () => {
   assert.equal(validateTravelDateRange({ startDate: '2026-09-10', endDate: '2026-09-14', days: 3, now }).code, 'days_mismatch');
   assert.equal(addPlanningDays('2026-12-31', 3), '2027-01-02');
 });
+
+test('one-day sightseeing returns on the same day without relaxing hotel date checks', () => {
+  const now = new Date('2026-10-23T12:00:00+08:00');
+  assert.equal(addPlanningDays('2026-10-24', 1), '2026-10-24');
+  assert.equal(validateTravelDateRange({ startDate: '2026-10-24', endDate: '2026-10-24', days: 1, now }).valid, true);
+  assert.equal(validateTravelDateRange({ startDate: '2026-10-24', endDate: '2026-10-24', days: 2, now }).valid, false);
+  assert.equal(validateTravelDateRange({ startDate: '2026-10-24', endDate: '2026-10-25', days: 1, now }).code, 'days_mismatch');
+});

@@ -5,7 +5,7 @@ import type { TravelPlace, TravelRouteSegment } from './travel';
 
 export type PlanningInputMethod = 'text' | 'asr' | 'realtime';
 export type PlanningPace = 'relaxed' | 'standard' | 'packed';
-export type PlanIntentProvider = 'remote_glm' | 'local_fallback' | 'unavailable';
+export type PlanIntentProvider = 'remote_glm' | 'local_fallback' | 'unavailable' | 'confirmed_fields';
 export type PlanningEntryMode = 'selected_places' | 'chat' | 'realtime';
 export type PlanningPatchSource = PlanningInputMethod | 'preference_settings';
 export type PlanningPlaceIntent = 'must_visit' | 'prefer' | 'avoid' | 'remove' | 'replace';
@@ -170,6 +170,8 @@ export interface PlanningPreferenceSnapshot {
 }
 
 export interface PlanningRequest {
+  /** Form/option inputs already have explicit semantics; free text needs interpretation. */
+  inputSource?: 'form' | 'conversation';
   userInput: string;
   inputMethod: PlanningInputMethod;
   mode: PlannerMode;

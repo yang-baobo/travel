@@ -14,6 +14,7 @@ import { useTripStore } from '../../store/useTripStore';
 import { useElderlyMode } from '../../theme/ElderlyModeContext';
 import { hydrateSelectedHotelGeography } from '../../services/travelData/hotel/HotelGeoService';
 import { fetchAmapRouteSegment } from '../../utils/amapService';
+import { itineraryLegTiming } from '../../utils/itineraryTiming';
 import { isSameTripHotelContext } from '../../domain/tripHotel';
 import { assessPlaceAccessibility, LIMITED_MOBILITY_DEFAULTS, mobilityExplanation } from '../../services/mobilityPolicy';
 import type { ExploreStackParamList } from '../../types';
@@ -154,7 +155,7 @@ export default function LiveItineraryScreen() {
     checkInDate: travelStartDate,
     checkOutDate: travelReturnDate,
   }), [currentTrip?.city, preference.selectedCity, travelReturnDate, travelStartDate]);
-  const activeHotel = currentTrip?.hotel || (selectedHotel && isSameTripHotelContext(selectedHotelContext, tripContext)
+  const activeHotel = currentTrip ? currentTrip.hotel : (selectedHotel && isSameTripHotelContext(selectedHotelContext, tripContext)
     ? selectedHotel
     : null);
   const verifiedHotelEndpoint = useMemo<TravelRouteEndpoint | null>(() => {
@@ -275,8 +276,11 @@ export default function LiveItineraryScreen() {
       const entries: DaySchedulePlace[] = [];
       plan.nodes.forEach((node, index) => {
         const duration = node.place ? (itemMeta[node.place.id]?.durationMinutes ?? 120) : 0;
-        const startTime = cursor;
-        const endTime = cursor + duration;
+        // Keep solver waiting time (especially lunch/dinner windows). Rebuilding
+        // from durations alone incorrectly pulled dinner into the afternoon.
+        const plannedStop = currentTrip?.days.find(day => day.day === plan.day)?.stops.find(stop => stop.place.id === node.place?.id);
+        const startTime = Math.max(cursor, plannedStop ? timeToMinutes(plannedStop.arrivalTime) : cursor);
+        const endTime = startTime + duration;
         const nextKey = `${plan.day}-${index}`;
         const nextSegment = segments[nextKey];
         const transitMinutes = nextSegment?.segment?.status === 'available'
@@ -290,7 +294,7 @@ export default function LiveItineraryScreen() {
       });
       return { plan, entries, dayEndMinute: cursor };
     });
-  }, [dayPlans, dayTimeWindows, itemMeta, mobilityActive, segments]);
+  }, [currentTrip, dayPlans, dayTimeWindows, itemMeta, mobilityActive, segments]);
 
   const tripOverview = useMemo(() => ({
     stops: itinerary.length,
@@ -354,14 +358,14 @@ export default function LiveItineraryScreen() {
           <View style={styles.heroCopy}>
             <Text style={styles.heroEyebrow}>YOUR COMPLETE BEIJING JOURNEY</Text>
             <Text style={styles.heroTitle}>{currentTrip?.title || '北京完整行程'}</Text>
-            <Text style={styles.heroSubtitle}>从每天出发到返回酒店，地点时间与每段真实交通都在这里展开。</Text>
+            <Text style={styles.heroSubtitle}>{activeHotel ? '从每天出发到返回酒店，地点时间与每段真实交通都在这里展开。' : '每天的游览时间与真实交通在这里展开；本次不安排酒店。'}</Text>
           </View>
         </View>
         <View style={styles.heroMetrics}>
           <View style={styles.heroMetric}><Text style={styles.heroMetricValue}>{travelDays}</Text><Text style={styles.heroMetricLabel}>天</Text></View>
           <View style={styles.heroMetric}><Text style={styles.heroMetricValue}>{tripOverview.stops}</Text><Text style={styles.heroMetricLabel}>地点</Text></View>
           <View style={styles.heroMetric}><Text style={styles.heroMetricValue}>{tripOverview.plannedTravelMinutes}</Text><Text style={styles.heroMetricLabel}>交通分钟</Text></View>
-          <View style={styles.heroMetric}><Text style={styles.heroMetricValue}>{tripOverview.knownCost === null ? '待核实' : `¥${Math.round(tripOverview.knownCost)}`}</Text><Text style={styles.heroMetricLabel}>已知费用</Text></View>
+          <View style={styles.heroMetric}><Text style={styles.heroMetricValue}>{tripOverview.knownCost === null || (currentTrip?.costCoverage === 'partial' && tripOverview.knownCost === 0) ? '待核实' : `¥${Math.round(tripOverview.knownCost)}`}</Text><Text style={styles.heroMetricLabel}>{currentTrip?.costCoverage === 'partial' ? '费用未完整（非总价）' : '已知费用'}</Text></View>
         </View>
       </LinearGradient>
       <ScrollView contentContainerStyle={styles.content}>
@@ -494,6 +498,7 @@ export default function LiveItineraryScreen() {
                 const { node } = entry;
                 const nextEntry = entries[index + 1];
                 const segmentKey = `${plan.day}-${index}`;
+                const legTiming = nextEntry ? itineraryLegTiming(entry.endTime, nextEntry.startTime, entry.transitMinutes, entry.restAfterMinutes) : null;
                 return (
                   <View key={node.key}>
                     {node.isHotelAnchor ? (
@@ -540,11 +545,17 @@ export default function LiveItineraryScreen() {
                           loading={loading && !segments[segmentKey]}
                           originName={node.endpoint.name}
                           destinationName={nextEntry.node.endpoint.name}
-                          departAt={entry.endTime}
-                          arriveAt={nextEntry.startTime}
+                          departAt={legTiming!.departAt}
+                          arriveAt={legTiming!.arriveAt}
                         />
                       </View>
                     )}
+                    {legTiming && legTiming.waitMinutes > 0 ? (
+                      <View style={styles.restPill}>
+                        <Ionicons name="time-outline" size={14} color="#9A6A21" />
+                        <Text style={styles.restPillText}>到达后预留休息 / 等候 {legTiming.waitMinutes} 分钟，{nextEntry.startTime} 开始下一项</Text>
+                      </View>
+                    ) : null}
                   </View>
                 );
               })}
@@ -657,7 +668,7 @@ function PlaceCard({ place, entry, orderNumber, durationMinutes, day, travelDays
         <TouchableOpacity style={styles.timeRow} onPress={onEditDuration}>
           <Ionicons name="time-outline" size={14} color={colors.primary} />
           <Text style={styles.timeText}>
-            {entry.startTime} - {entry.endTime} · 游玩{formatDuration(durationMinutes)}
+            {entry.startTime} - {entry.endTime} · {place.category === 'restaurant' ? '用餐' : '游玩'}{formatDuration(durationMinutes)}
           </Text>
           <Ionicons name="chevron-forward" size={13} color={colors.disabled} />
         </TouchableOpacity>

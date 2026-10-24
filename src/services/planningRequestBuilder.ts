@@ -73,6 +73,7 @@ export function buildPlanningRequest(input: {
     || EMPTY_HARD_CONSTRAINTS;
   return {
     userInput: input.userInput.trim(),
+    inputSource: input.userInput.trim() || input.inputMethod !== 'text' ? 'conversation' : 'form',
     inputMethod: input.inputMethod,
     mode: input.mode,
     city: '北京',

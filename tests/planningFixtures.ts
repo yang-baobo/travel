@@ -1,5 +1,6 @@
 import type { PlanIntent, PlanningRequest, TripPlanDraft } from '../src/types/planning';
 import type { TravelPlace } from '../src/types/travel';
+import { addPlanningDays, localTodayISO } from '../src/services/planningDateValidation';
 
 export function place(id: string, category: TravelPlace['category'] = 'attraction'): TravelPlace {
   return {
@@ -59,8 +60,8 @@ export function planningRequest(overrides: Partial<PlanningRequest> = {}): Plann
       dinnerLatestEndTime: '20:00',
       transportPreference: 'transit',
       transportRule: { walkMaxKm: 1, defaultMode: 'transit', maxTransitMinutes: 60, maxWalkToStationKm: 1 },
-      travelStartDate: '2026-09-15',
-      travelReturnDate: '2026-09-16',
+      travelStartDate: addPlanningDays(localTodayISO(), 2),
+      travelReturnDate: addPlanningDays(localTodayISO(), 3),
       dailyStartTime: '09:00',
       dailyEndTime: '19:00',
       elderlyMode: true,
@@ -110,10 +111,10 @@ export function draft(overrides: Partial<TripPlanDraft> = {}): TripPlanDraft {
     hotel: null,
     days: [{
       day: 1,
-      date: '2026-09-15',
+      date: request.preferenceSnapshot.travelStartDate,
       travelMinutes: 0,
       stops: [{ id: 'stop-test', day: 1, arrivalTime: '09:00', endTime: '11:30', durationMinutes: 150, place: selected, transportToNext: null }],
-    }, { day: 2, date: '2026-09-16', travelMinutes: 0, stops: [] }],
+    }, { day: 2, date: request.preferenceSnapshot.travelReturnDate, travelMinutes: 0, stops: [] }],
     unassignedPlaces: [],
     warnings: [],
     uncertainties: [],

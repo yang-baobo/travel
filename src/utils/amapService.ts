@@ -72,7 +72,7 @@ export async function fetchAmapRoutesRaw(
     } catch (error) {
       lastError = error;
       if (attempt === 1 || !retryableRouteError(error)) throw error;
-      await wait(150 * (attempt + 1));
+      await wait(1100 * (attempt + 1));
     }
   }
   throw lastError instanceof Error ? lastError : new Error('真实路线服务不可用');

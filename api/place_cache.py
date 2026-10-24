@@ -492,8 +492,6 @@ async def get_place_detail(
             "databaseAvailable": db_available,
         },
     }
-    if refresh_error:
-        response["cache"]["refreshError"] = refresh_error
     return response
 
 
